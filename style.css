@@ -155,7 +155,8 @@ body{
 .float-tab-body .hint{ margin-bottom:0; }
 .float-tab-body .btn-row .btn{ margin-bottom:0; }
 
-#bgEditBanner{
+#bgEditBanner,
+#capitalPickBanner{
   display:none; position:absolute; top:12px; left:50%; transform:translateX(-50%);
   background:var(--accent); color:#1b1508; font-size:12px; font-weight:700;
   padding:8px 16px; border-radius:var(--radius); z-index:10; pointer-events:none;
@@ -253,6 +254,19 @@ button.btn:disabled:hover{ border-color:var(--border); color:var(--text); }
 #inspectorContent b{ color:var(--accent); font-weight:600; }
 .inspector-custom{ margin-top:6px; padding-top:6px; border-top:1px solid var(--border); }
 
+.brush-swatch{
+  display:inline-block; width:34px; height:34px; border-radius:6px; flex-shrink:0;
+  border:1px solid var(--border); background:transparent;
+}
+.field-row select{ margin-bottom:0; }
+
+.faction-badge{
+  display:inline-block; width:22px; height:15px; border-radius:3px; flex-shrink:0;
+  border:1px solid rgba(255,255,255,.25);
+}
+.faction-badge.has-flag{ background-size:cover; background-position:center; }
+.country-count.landless{ color:var(--danger); }
+
 .country-row{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
 .country-name{
   flex:1; font-size:12px; color:var(--text); cursor:pointer;
@@ -303,6 +317,10 @@ button.btn:disabled:hover{ border-color:var(--border); color:var(--text); }
   border-color: var(--danger);
   color: var(--danger);
 }
+
+.btn-icon-sm[hidden] { display: none; }
+.btn-icon-sm:disabled { opacity: .4; cursor: not-allowed; }
+.btn-icon-sm:disabled:hover { border-color: var(--border); color: var(--text-dim); }
 
 #customDataValueBoolWrap{ display:none; }
 
@@ -367,10 +385,60 @@ button.btn:disabled:hover{ border-color:var(--border); color:var(--text); }
   border-radius:8px; padding:18px 20px;
   box-shadow:0 16px 40px rgba(0,0,0,.45);
 }
+.modal-wide{ width:min(560px, calc(100vw - 32px)); }
 .modal h2{
   font-size:14px; margin:0 0 12px; color:var(--accent);
   letter-spacing:.06em; text-transform:uppercase;
 }
+
+/* ==========================================================================
+   FACTION EDITOR
+   ========================================================================== */
+.faction-modal-head{
+  display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+}
+.faction-modal-head h2{ font-size:16px; }
+#factionDeleteBtn{ width:26px; height:26px; font-size:12px; }
+#factionDeleteBtn svg{ width:14px; height:14px; }
+
+.faction-identity{ display:flex; gap:14px; margin-bottom:14px; }
+.faction-flag{ width:96px; flex-shrink:0; }
+.faction-flag-drop{
+  position:relative; display:flex; align-items:center; justify-content:center;
+  width:96px; height:64px; margin:0;
+  background:var(--panel-alt) center/cover no-repeat;
+  border:1px dashed var(--border); border-radius:var(--radius); cursor:pointer;
+}
+.faction-flag-drop:hover{ border-color:var(--accent); }
+.faction-flag-drop svg{ width:28px; height:28px; color:var(--text-dim); }
+.faction-flag-drop:not(.empty) svg{ display:none; }
+.faction-flag-drop input{ position:absolute; inset:0; opacity:0; cursor:pointer; }
+.faction-flag-caption{
+  display:flex; align-items:center; justify-content:center; gap:6px;
+  font-size:11px; color:var(--text-dim); margin-top:6px;
+}
+
+.faction-identity-fields{ flex:1; min-width:0; }
+.faction-identity-fields input,
+.faction-identity-fields select{ margin-bottom:8px; }
+.faction-identity-fields > :last-child{ margin-bottom:0; }
+
+.faction-attrs{ display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:14px; }
+.faction-attr{
+  display:flex; align-items:center; gap:8px; margin:0;
+  font-size:12px; color:var(--text);
+}
+.faction-attr .btn{ margin-bottom:0; }
+#factionCapitalLabel{ font-size:12px; color:var(--accent); }
+#factionCapitalLabel.is-empty{ color:var(--text-dim); }
+
+#factionDescInput{
+  width:100%; min-height:110px; resize:vertical;
+  background:var(--panel-alt); border:1px solid var(--border);
+  color:var(--text); padding:8px; border-radius:var(--radius);
+  font-family:inherit; font-size:12.5px; margin-bottom:10px; user-select:text;
+}
+#factionDescInput:focus{ outline:1px solid var(--accent); }
 .modal .hint{ margin-bottom:12px; }
 .about-block{ margin-bottom:14px; }
 .about-block h3{

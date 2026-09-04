@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- Cartographer V0.6.1 -->
+<!-- Cartographer V0.7.0 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cartographer — Hex Grand Strategy Map Editor</title>
+<title>Cartographer — Official Map Editor for Staria</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://unpkg.com/lucide@latest"></script>
 </head>
@@ -16,7 +16,7 @@
   <aside id="sidebar">
     <div class="sidebar-header">
       <h1>Cartographer</h1>
-      <p>Hex Grand-Strategy Map Editor</p>
+      <p>Official Map Editor for Staria</p>
     </div>
 
     <div class="scroll-area">
@@ -83,26 +83,32 @@
         <span id="populationAmountLabel">0</span>
       </section>
 
-      <!-- OWNER BRUSH -->
+      <!-- FACTION BRUSH -->
       <section class="panel-section" data-tool="owner">
-        <h2><i data-lucide="flag"></i> Owner / Country Brush</h2>
+        <h2><i data-lucide="flag"></i> Faction Brush</h2>
         <div class="field-row">
-          <div><input type="text" id="ownerInput" placeholder="Country name (blank = no owner)"></div>
-          <input type="color" id="ownerColorInput" value="#c9a24d">
+          <span class="brush-swatch" id="ownerFactionSwatch"></span>
+          <div><select id="ownerFactionSelect"></select></div>
         </div>
-        <div class="hint">Painting a country also writes matching loyalty on those hexes.</div>
+        <div class="btn-row">
+          <button class="btn" id="newFactionBtn"><i data-lucide="plus"></i> New Faction</button>
+          <button class="btn" id="editOwnerFactionBtn" disabled><i data-lucide="pencil"></i> Edit</button>
+        </div>
+        <div class="hint">Painting a faction also writes matching loyalty on those hexes.</div>
       </section>
 
       <!-- LOYALTY BRUSH -->
       <section class="panel-section" data-tool="loyalty">
         <h2><i data-lucide="heart"></i> Loyalty Brush</h2>
         <div class="field-row">
-          <div><input type="text" id="loyaltyInput" placeholder="Loyalty (blank = none)"></div>
-          <input type="color" id="loyaltyColorInput" value="#8a9098" disabled>
+          <span class="brush-swatch" id="loyaltyFactionSwatch"></span>
+          <div><select id="loyaltyFactionSelect"></select></div>
         </div>
+        <button class="btn" id="editLoyaltyFactionBtn" disabled><i data-lucide="pencil"></i> Edit Faction</button>
         <div class="hint">
-          Residents’ allegiance. Matching the ruling country uses that country’s color.
-          Loyalty to a different existing country uses a shifted color. Unknown names are gray.
+          Residents’ allegiance, chosen from the faction list. Hexes the faction also owns use its
+          color, hexes owned by someone else use a shifted color, and a faction with no territory
+          at all stays gray.
         </div>
       </section>
 
@@ -113,13 +119,13 @@
           <div><input type="text" id="cultureInput" placeholder="Culture name (blank = none)"></div>
           <input type="color" id="cultureColorInput" value="#9c6eb9">
         </div>
-        <div class="hint">Independent of countries. About residents, not rule.</div>
+        <div class="hint">Independent of factions. About residents, not rule.</div>
       </section>
 
-      <!-- COUNTRIES LIST (always visible) -->
-      <section class="panel-section" id="countriesSection">
-        <h2><i data-lucide="shield"></i> Countries</h2>
-        <div id="countryList" class="hint">No countries painted yet.</div>
+      <!-- FACTIONS LIST (always visible) -->
+      <section class="panel-section" id="factionsSection">
+        <h2><i data-lucide="shield"></i> Factions</h2>
+        <div id="factionList" class="hint">No factions yet. Create one to start painting territory.</div>
       </section>
 
       <!-- LOYALTIES LIST -->
@@ -269,7 +275,7 @@
         </button>
         <div class="float-tab-body">
           <div class="radio-row" id="toolRadios"></div>
-          <div class="hint">Each tool writes only its own layer, except country paint which also sets matching loyalty. Number keys switch tools.</div>
+          <div class="hint">Each tool writes only its own layer, except faction paint which also sets matching loyalty. Number keys switch tools.</div>
         </div>
       </section>
       <section class="float-tab" id="layersTab">
@@ -315,12 +321,61 @@
       </section>
     </div>
     <div id="bgEditBanner">Background Edit Mode — drag to move image, scroll to resize. Map is frozen.</div>
+    <div id="capitalPickBanner">Click a hex to set it as the capital — Esc to cancel.</div>
     <div id="hud">
       <div id="hud-stats"></div>
       <div id="inspector-hud" class="inspector-hud"></div>
     </div>
   </main>
 
+</div>
+
+<div id="factionModal" class="modal-overlay" hidden>
+  <div class="modal modal-wide" role="dialog" aria-labelledby="factionModalTitle">
+    <div class="faction-modal-head">
+      <h2 id="factionModalTitle">Faction Editor</h2>
+      <button class="btn-icon-sm danger" id="factionDeleteBtn" title="Delete this faction"><i data-lucide="trash-2"></i></button>
+    </div>
+
+    <div class="faction-identity">
+      <div class="faction-flag">
+        <label class="faction-flag-drop" id="factionFlagPreview">
+          <i data-lucide="flag"></i>
+          <input type="file" id="factionFlagFile" accept="image/*">
+        </label>
+        <div class="faction-flag-caption">
+          <span>Upload Flag</span>
+          <button class="btn-icon-sm danger" id="factionFlagClearBtn" title="Remove flag" hidden>×</button>
+        </div>
+      </div>
+      <div class="faction-identity-fields">
+        <input type="text" id="factionNameInput" placeholder="Faction Name">
+        <select id="factionTypeSelect" title="Faction type"></select>
+        <input type="text" id="factionIdeologyInput" placeholder="Ideology / Government Type">
+      </div>
+    </div>
+
+    <div class="faction-attrs">
+      <label class="faction-attr">
+        <input type="color" id="factionColorInput" value="#c9a24d">
+        <span>Pick a color</span>
+      </label>
+      <div class="faction-attr">
+        <button class="btn btn-icon" id="factionCapitalPickBtn"><i data-lucide="landmark"></i> Select capital hex</button>
+        <span id="factionCapitalLabel" class="is-empty">No capital set</span>
+        <button class="btn-icon-sm danger" id="factionCapitalClearBtn" title="Remove capital" disabled>×</button>
+      </div>
+    </div>
+
+    <textarea id="factionDescInput" rows="5" placeholder="Faction description..."></textarea>
+
+    <div class="hint">Flag, capital and description are all optional. A faction with no territory still shows up in the loyalty brush, tinted gray.</div>
+
+    <div class="btn-row">
+      <button class="btn" id="factionCancelBtn">Cancel</button>
+      <button class="btn btn-primary" id="factionSaveBtn">Save</button>
+    </div>
+  </div>
 </div>
 
 <div id="settingsModal" class="modal-overlay" hidden>
@@ -367,7 +422,7 @@
 <div id="aboutModal" class="modal-overlay" hidden>
   <div class="modal" role="dialog" aria-labelledby="aboutTitle">
     <h2 id="aboutTitle">About Cartographer</h2>
-    <p class="hint">Hex grand-strategy map editor.</p>
+    <p class="hint">Official Map Editor for Staria</p>
     <div id="aboutBody"></div>
     <button class="btn" id="aboutCloseBtn">Close</button>
   </div>

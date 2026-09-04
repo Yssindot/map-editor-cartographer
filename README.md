@@ -1,6 +1,6 @@
 # Cartographer
 
-**Cartographer** (v0.6.1) is a browser-based hex map editor for grand-strategy style worlds. You paint terrain, elevation, countries, loyalty, culture, and population onto an axial hex grid, draw roads and rivers, stamp city labels, and export the map as JSON or PNG.
+**Cartographer** (v0.7.0) is a browser-based hex map editor for grand-strategy style worlds. You paint terrain, elevation, faction territory, loyalty, culture, and population onto an axial hex grid, draw roads and rivers, stamp city labels, and export the map as JSON or PNG.
 
 The app is a single-page editor: a sidebar of tools and a full-viewport HTML Canvas. There is no backend.
 
@@ -65,9 +65,9 @@ Camera: pan with middle/right mouse (or background-edit drag), zoom with wheel t
 
 History is **not** a full map snapshot on every brush stroke.
 
-- **`beginAction()`** starts a stroke and snapshots country/culture registries.  
+- **`beginAction()`** starts a stroke and snapshots faction/culture registries.  
 - **`markHexForUndo(hex)`** stores the **first** clone of each touched hex in `activeUndoDelta`.  
-- **`commitAction()`** pushes a `{ type: 'delta', changes, countriesBefore/After, culturesBefore/After }` entry if anything changed. Stack size is capped (`MAX_UNDO`, default 30).
+- **`commitAction()`** pushes a `{ type: 'delta', changes, factionsBefore/After, culturesBefore/After }` entry if anything changed. Stack size is capped (`MAX_UNDO`, default 30).
 
 Undo restores those hex clones and the “before” registries; redo applies the inverse hex map plus “after” registries.
 
@@ -82,12 +82,12 @@ Redo is a parallel stack; a new committed action clears it.
 
 **View layers** (checkboxes) only change what is drawn: terrain base, elevation shading, ownership tints/borders, loyalty, culture, routes, population heatmap, full grid.
 
-**Edit tools** are exclusive and listed in `TOOL_DEFS`. Each tool writes **its own hex fields** (country paint is the exception: it also sets matching loyalty). Number keys `1`–`8` switch tools. Paint tools use a hex-radius brush; stamp (`label`) clicks one hex; `path` is a waypoint editor.
+**Edit tools** are exclusive and listed in `TOOL_DEFS`. Each tool writes **its own hex fields** (faction paint is the exception: it also sets matching loyalty). Number keys `1`–`8` switch tools. Paint tools use a hex-radius brush; stamp (`label`) clicks one hex; `path` is a waypoint editor.
 
 | Shortcut | Tool | Writes |
 | --- | --- | --- |
 | 1 | Terrain | `terrain` |
-| 2 | Owner / country | `owner` + `loyalty` |
+| 2 | Faction | `owner` + `loyalty` |
 | 3 | Loyalty | `loyalty` |
 | 4 | Culture | `culture` |
 | 5 | Population | `population` (set or add/subtract, falloff + jitter) |
@@ -99,13 +99,24 @@ Sidebar panels use `data-tool="<id>"` (or `data-tool-kind="paint"` for brush siz
 
 Paths may join or cross at a **single** hex but must not run along each other (two consecutive shared hexes) or self-overlap. Invalid cells preview in red.
 
+### Factions
+
+Factions are authored in the **Faction Editor** modal rather than typed into the brush, and live in a `Map` keyed by their unique name. A record holds `color`, `type` (`state` / `nonstate`), `ideology`, `description`, an optional `flag` (a data URL, re-encoded down to 256 px on upload) and an optional `capital`.
+
+Nothing prunes the registry, so a faction may hold **zero territory** and still be painted as a loyalty. Both the faction and loyalty brushes are `<select>`s over that registry, with a blank option that erases; free text is no longer accepted. Loyalty coloring follows the faction's holdings: hexes it also owns take its color, hexes owned by someone else take a hue-shifted variant, and a faction with no territory anywhere stays gray.
+
+Owned-hex tallies and the capital lookup are cached in `factionCounts` / `capitalIndex` and cleared through `invalidateFactionCache()`.
+
 ## Features (editor)
 
 - Generate maps from 2×2 to 300×300 hexes (defaults 40×30).  
-- Shift+click select a hex; set country capital; per-hex custom fields (string / number / boolean).  
+- Faction Editor: name, state/non-state, ideology, color, optional flag, optional capital, description.  
+- Shift+click select a hex; set a faction capital; per-hex custom fields (string / number / boolean).  
 - Background reference image: opacity, scale, offset, freeze-map edit mode.  
-- Export JSON (`hex-map.json`, meta version 7) and PNG of the current canvas.  
+- Export JSON (`hex-map.json`, meta version 8) and PNG of the current canvas.  
 - Import JSON; settings and optional timed autosave in this browser.
+
+Imports read `factions` when present and fall back to the old `owners` map otherwise; any owner or loyalty name a legacy file references but does not define is back-filled as a faction so no hex points at a missing one.
 
 ## Controls
 
@@ -145,12 +156,17 @@ No install, build, or environment variables are required. Settings and autosave 
 
 ```json
 {
-  "meta": { "version": 7, "cols": 40, "rows": 30, "hexSize": 22, "exportedAt": "…" },
-  "owners": { "CountryName": { "color": "#c9a24d", "capital": { "q": 0, "r": 0 } } },
+  "meta": { "version": 8, "cols": 40, "rows": 30, "hexSize": 22, "exportedAt": "…" },
+  "factions": [{
+    "name": "FactionName", "type": "state", "ideology": "…", "description": "…",
+    "color": "#c9a24d", "flag": "data:image/png;base64,…", "capital": { "q": 0, "r": 0 },
+    "hexCount": 42
+  }],
+  "owners": { "FactionName": { "color": "#c9a24d", "capital": { "q": 0, "r": 0 } } },
   "cultures": { "CultureName": { "color": "#9c6eb9" } },
   "routes": [{ "id": 1, "name": "…", "style": "dirt", "waypoints": [{ "q": 0, "r": 0 }] }],
   "hexes": [{ "q": 0, "r": 0, "terrain": "grassland", "elevation": "flat", "population": 0 }]
 }
 ```
 
-Pixel `x`/`y` are recomputed on import via `axialToPixel`.
+Pixel `x`/`y` are recomputed on import via `axialToPixel`. `owners` duplicates each faction's color and capital so tooling written against the older export keeps working; `factions` is the authoritative list and is the only one that carries landless factions, types, flags and descriptions.
