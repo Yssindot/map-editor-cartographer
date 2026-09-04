@@ -1,0 +1,37 @@
+# Cartographer — agent rules
+
+This workspace is a **Vanilla JS / HTML / Canvas** hex map editor. Follow these rules on every change.
+
+## Stack (strict)
+
+- Use only **Vanilla JavaScript**, **HTML**, and **CSS**. Do not introduce React, Vue, Svelte, Angular, TypeScript, jQuery, bundlers, npm packages, CSS-in-JS, or Tailwind.
+- The **only** allowed third-party library is **Lucide icons** (already loaded from CDN in `index.html`). Do not add other icon sets or UI kits.
+- Keep the three-file architecture: `index.html` (structure), `script.js` (logic), `style.css` (appearance). Do not split into modules unless the user explicitly asks.
+- Prefer extending existing patterns (`TOOL_DEFS`, sidebar `data-tool`, canvas `render()` pipeline) over new subsystems.
+
+## Hex math
+
+- All hex geometry must use the **existing axial coordinate system** `(q, r)` with cube identity `s = -q - r`.
+- Reuse `axialToPixel`, `pixelToAxial`, `axialRound`, `offsetToAxial`, `hexRange`, `axialDistance`, `hexLine`, `NEIGHBOR_DIRS`, and `edgeSegment`. Do not invent offset-column math, cube-only APIs, or a second grid representation.
+- Store hexes in `hexes` keyed by `` `${q},${r}` ``. Derive pixel `x`/`y` from axial coords and `HEX_SIZE`; do not treat screen pixels as the source of truth.
+- Pointy-top layout is fixed. Do not switch to flat-top without an explicit user request.
+
+## Input and keybinds
+
+- For **custom keybinds** (undo/redo, tool shortcuts, Esc, Delete on paths, etc.), always call **`e.preventDefault()`** so the browser does not handle the same keys.
+- Keep the existing form-field guard: ignore editor shortcuts when focus is on `input`, `textarea`, or `select`.
+- Canvas context menu: keep `e.preventDefault()` on `contextmenu`. Wheel zoom must use `{ passive: false }` and `preventDefault()` so the page does not scroll.
+
+## CSS
+
+- Format and author CSS with the **existing CSS variables** in `:root`:
+  `--bg`, `--panel`, `--panel-alt`, `--border`, `--text`, `--text-dim`, `--accent`, `--accent-strong`, `--danger`, `--radius`.
+- Do not hardcode new palette hex values in CSS when a token already exists. New one-off colors need a new `:root` variable, then use `var(--name)`.
+- Match existing layout conventions (flex sidebar + canvas, `.btn`, `.panel-section`, `.hint`, `.field-row`).
+
+## Domain conventions
+
+- Paint tools write **one layer** unless the product already couples them (owner paint also sets loyalty).
+- Undo for hex edits must stay **delta-based** (`beginAction` / `markHexForUndo` / `commitAction`). Use `pushFullStateUndo` only for whole-map replace; use `pushRoutesUndo` for route mutations.
+- Rendering must stay **batched by fill color** (`beginPath` + many `addHexToPath` + one `fill`). Do not fill hexes one `fill()` at a time in a hot loop.
+- After map mutations that should be visible, call `render()` (and refresh the relevant sidebar lists).

@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<!-- Cartographer V0.6.1 -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cartographer — Hex Grand Strategy Map Editor</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============================== SIDEBAR ============================== -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <h1>Cartographer</h1>
+      <p>Hex Grand-Strategy Map Editor</p>
+    </div>
+
+    <div class="scroll-area">
+
+      <!-- MAP SETUP -->
+      <section class="panel-section">
+        <h2><i data-lucide="map"></i> Map Setup</h2>
+        <div class="field-row">
+          <div><label>Width (hexes)<input type="number" id="mapCols" value="40" min="2" max="300"></label></div>
+          <div><label>Height (hexes)<input type="number" id="mapRows" value="30" min="2" max="300"></label></div>
+        </div>
+        <button class="btn btn-primary" id="newMapBtn"><i data-lucide="sparkles"></i> Generate New Map</button>
+        <button class="btn" id="centerViewBtn">Center View</button>
+        <button class="btn" id="cleanOceanBtn"><i data-lucide="waves"></i> Clear Ocean Data</button>
+      </section>
+
+      <!-- HISTORY -->
+      <section class="panel-section">
+        <h2><i data-lucide="history"></i> History</h2>
+        <div class="btn-row">
+          <button class="btn" id="undoBtn" disabled><i data-lucide="undo-2"></i> Undo</button>
+          <button class="btn" id="redoBtn" disabled><i data-lucide="redo-2"></i> Redo</button>
+        </div>
+        <div class="hint">Ctrl+Z to undo, Ctrl+Y (or Ctrl+Shift+Z) to redo.</div>
+      </section>
+
+      <!-- TERRAIN BRUSH -->
+      <section class="panel-section" data-tool="terrain">
+        <h2><i data-lucide="sprout"></i> Terrain Brush</h2>
+        <div class="swatch-grid" id="terrainSwatches"></div>
+      </section>
+
+      <!-- ELEVATION BRUSH -->
+      <section class="panel-section" data-tool="elevation">
+        <h2><i data-lucide="mountain"></i> Elevation Brush</h2>
+        <div class="radio-row inline">
+          <label><input type="radio" name="elevationMode" value="flat"> Flat</label>
+          <label><input type="radio" name="elevationMode" value="hills" checked> Hills</label>
+          <label><input type="radio" name="elevationMode" value="mountains"> Mountains</label>
+        </div>
+      </section>
+
+      <!-- POPULATION BRUSH -->
+      <section class="panel-section" data-tool="population">
+        <h2><i data-lucide="users"></i> Population Brush</h2>
+        <div class="radio-row">
+          <label><input type="radio" name="populationMode" value="set" checked> Set Exact Value</label>
+          <label><input type="radio" name="populationMode" value="addsub"> Add / Subtract</label>
+        </div>
+        <label>Amount</label>
+        <div class="swatch-grid">
+          <button type="button" class="btn" data-pop="100">Hamlet (100)</button>
+          <button type="button" class="btn" data-pop="5000">Town (5k)</button>
+          <button type="button" class="btn" data-pop="50000">City (50k)</button>
+          <button type="button" class="btn" data-pop="1000000">Metropolis (1M)</button>
+        </div>
+        <div class="field-row">
+          <button type="button" class="btn btn-icon" id="popSubBtn"><i data-lucide="minus"></i></button>
+          <div>
+            <input type="range" id="populationAmountSlider" min="0" max="10000000" value="0">
+          </div>
+          <button type="button" class="btn btn-icon" id="popAddBtn"><i data-lucide="plus"></i></button>
+        </div>
+        <span id="populationAmountLabel">0</span>
+      </section>
+
+      <!-- OWNER BRUSH -->
+      <section class="panel-section" data-tool="owner">
+        <h2><i data-lucide="flag"></i> Owner / Country Brush</h2>
+        <div class="field-row">
+          <div><input type="text" id="ownerInput" placeholder="Country name (blank = no owner)"></div>
+          <input type="color" id="ownerColorInput" value="#c9a24d">
+        </div>
+        <div class="hint">Painting a country also writes matching loyalty on those hexes.</div>
+      </section>
+
+      <!-- LOYALTY BRUSH -->
+      <section class="panel-section" data-tool="loyalty">
+        <h2><i data-lucide="heart"></i> Loyalty Brush</h2>
+        <div class="field-row">
+          <div><input type="text" id="loyaltyInput" placeholder="Loyalty (blank = none)"></div>
+          <input type="color" id="loyaltyColorInput" value="#8a9098" disabled>
+        </div>
+        <div class="hint">
+          Residents’ allegiance. Matching the ruling country uses that country’s color.
+          Loyalty to a different existing country uses a shifted color. Unknown names are gray.
+        </div>
+      </section>
+
+      <!-- CULTURE BRUSH -->
+      <section class="panel-section" data-tool="culture">
+        <h2><i data-lucide="landmark"></i> Culture Brush</h2>
+        <div class="field-row">
+          <div><input type="text" id="cultureInput" placeholder="Culture name (blank = none)"></div>
+          <input type="color" id="cultureColorInput" value="#9c6eb9">
+        </div>
+        <div class="hint">Independent of countries. About residents, not rule.</div>
+      </section>
+
+      <!-- COUNTRIES LIST (always visible) -->
+      <section class="panel-section" id="countriesSection">
+        <h2><i data-lucide="shield"></i> Countries</h2>
+        <div id="countryList" class="hint">No countries painted yet.</div>
+      </section>
+
+      <!-- LOYALTIES LIST -->
+      <section class="panel-section" id="loyaltiesSection">
+        <h2><i data-lucide="heart-handshake"></i> Loyalties</h2>
+        <div id="loyaltyList" class="hint">No loyalties painted yet.</div>
+      </section>
+
+      <!-- CULTURES LIST -->
+      <section class="panel-section" id="culturesSection">
+        <h2><i data-lucide="globe"></i> Cultures</h2>
+        <div id="cultureList" class="hint">No cultures painted yet.</div>
+      </section>
+
+      <!-- BRUSH SIZE -->
+      <section class="panel-section" data-tool-kind="paint">
+        <h2><i data-lucide="paintbrush"></i> Brush Size</h2>
+        <input type="range" id="brushSizeSlider" min="1" max="8" value="1">
+        <div class="hint">Radius: <span id="brushSizeLabel">1</span> hex</div>
+      </section>
+
+      <!-- CITY / REGION LABEL TOOL -->
+      <section class="panel-section" data-tool="label">
+        <h2><i data-lucide="map-pin"></i> City / Region Label</h2>
+        <input type="text" id="cityNameInput" placeholder="Name (blank = remove label)">
+      </section>
+
+      <!-- ROAD / RIVER TOOL -->
+      <section class="panel-section" data-tool="path">
+        <h2><i data-lucide="route"></i> Road / River</h2>
+        <div class="swatch-grid" id="routeSwatches"></div>
+        <label>Mode</label>
+        <div class="radio-row inline">
+          <label><input type="radio" name="pathMode" value="draw" checked> Draw</label>
+          <label><input type="radio" name="pathMode" value="edit"> Edit</label>
+          <label><input type="radio" name="pathMode" value="erase"> Erase</label>
+        </div>
+        <button class="btn" id="cancelPathBtn" disabled>Cancel Path</button>
+        <div class="hint">
+          <b>Draw</b> — click start, then end. Shift+Click adds waypoints, Esc cancels.
+          Click an end to extend, Alt+Click to branch off instead.<br>
+          <b>Edit</b> — click a path to select, drag its handles to reshape,
+          Shift+Click to insert a handle, Alt+Click a handle to remove it.<br>
+          Paths may join, branch and cross at single hexes, but cannot run along
+          each other or cross themselves. Blocked hexes preview in red.
+        </div>
+      </section>
+
+      <!-- ROADS & RIVERS LIST -->
+      <section class="panel-section" id="routesSection">
+        <h2><i data-lucide="git-branch"></i> Roads & Rivers</h2>
+        <div id="routeList" class="hint">No roads or rivers drawn yet.</div>
+      </section>
+
+      <!-- SELECTED HEX -->
+      <section class="panel-section">
+        <h2><i data-lucide="hexagon"></i> Selected Hex</h2>
+        <div id="selectedHexInfo" class="hint">Shift+Click a hex to select it.</div>
+        <div id="selectedHexMeta" class="selected-hex-meta" hidden></div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="setCapitalBtn" disabled>Set as Capital</button>
+          <button class="btn" id="clearCapitalBtn" disabled>Remove Capital</button>
+        </div>
+        <button class="btn" id="clearSelectionBtn" disabled>Clear Selection</button>
+      </section>
+
+      <!-- CUSTOM DATA -->
+      <section class="panel-section">
+        <h2><i data-lucide="database"></i> Custom Data</h2>
+        <div id="customDataLocked" class="hint">Select a hex to edit its fields.</div>
+        <div id="customDataEditor" hidden>
+          <div id="customDataRows"></div>
+          <div class="custom-data-add">
+            <label>New field name</label>
+            <input type="text" id="customDataKeyInput" placeholder="e.g. resourceType">
+            <label>Type</label>
+            <div class="radio-row inline">
+              <label><input type="radio" name="customDataType" value="string" checked> String</label>
+              <label><input type="radio" name="customDataType" value="number"> Number</label>
+              <label><input type="radio" name="customDataType" value="boolean"> Boolean</label>
+            </div>
+            <div id="customDataValueTextWrap">
+              <label>Value</label>
+              <input type="text" id="customDataValueInput" placeholder="e.g. Iron">
+            </div>
+            <div id="customDataValueBoolWrap">
+              <label>Value</label>
+              <div class="radio-row inline">
+                <label><input type="radio" name="customDataBoolValue" value="true" checked> True</label>
+                <label><input type="radio" name="customDataBoolValue" value="false"> False</label>
+              </div>
+            </div>
+            <button class="btn btn-primary" id="addCustomDataBtn">Add Field</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- BACKGROUND REFERENCE -->
+      <section class="panel-section">
+        <h2><i data-lucide="image"></i> Background Reference</h2>
+        <label class="file-label">Upload image
+          <input type="file" id="bgFileInput" accept="image/*">
+        </label>
+        <label class="check-row"><input type="checkbox" id="bgVisibleToggle" checked> Show background</label>
+        <label>Image Opacity</label>
+        <input type="range" id="bgOpacitySlider" min="0" max="100" value="50">
+        <div class="field-row">
+          <div><label>Scale<input type="number" id="bgScaleInput" value="1" step="0.05" min="0.01"></label></div>
+        </div>
+        <div class="field-row">
+          <div><label>Offset X<input type="number" id="bgOffsetX" value="0" step="1"></label></div>
+          <div><label>Offset Y<input type="number" id="bgOffsetY" value="0" step="1"></label></div>
+        </div>
+        <button class="btn" id="bgEditModeToggle">Enable Background Edit Mode</button>
+        <button class="btn" id="bgClearBtn">Remove Image</button>
+      </section>
+
+      <!-- DATA -->
+      <section class="panel-section">
+        <h2><i data-lucide="folder"></i> Map Data</h2>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="exportBtn"><i data-lucide="download"></i> Export JSON</button>
+          <button class="btn btn-primary" id="exportPngBtn"><i data-lucide="image-down"></i> Export PNG</button>
+        </div>
+        <label class="file-label"><i data-lucide="upload"></i> Import Map (JSON)
+          <input type="file" id="importFileInput" accept="application/json,.json">
+        </label>
+      </section>
+
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="btn" id="settingsBtn">⚙️ Settings</button>
+      <button class="btn" id="aboutBtn">ℹ️ About</button>
+    </div>
+  </aside>
+
+  <!-- ============================== CANVAS ============================== -->
+  <main id="canvasWrap">
+    <canvas id="mapCanvas"></canvas>
+    <div id="controlsHint"></div>
+    <div id="mapFloatTabs">
+      <section class="float-tab" id="selectedToolTab">
+        <button type="button" class="float-tab-toggle" aria-expanded="true" title="Selected Tool">
+          <i data-lucide="mouse-pointer-2"></i>
+          <span class="float-tab-title">Selected Tool</span>
+        </button>
+        <div class="float-tab-body">
+          <div class="radio-row" id="toolRadios"></div>
+          <div class="hint">Each tool writes only its own layer, except country paint which also sets matching loyalty. Number keys switch tools.</div>
+        </div>
+      </section>
+      <section class="float-tab" id="layersTab">
+        <button type="button" class="float-tab-toggle" aria-expanded="true" title="Layers">
+          <i data-lucide="layers"></i>
+          <span class="float-tab-title">Layers</span>
+        </button>
+        <div class="float-tab-body">
+          <label>View Layers</label>
+          <div class="radio-row" id="viewModeRadios">
+            <label><input type="checkbox" id="layerTerrain" checked> Terrain Base</label>
+            <label><input type="checkbox" id="layerElevation" checked> Elevation</label>
+            <label><input type="checkbox" id="layerOwnership" checked> Ownership Borders & Tints</label>
+            <label><input type="checkbox" id="layerLoyalty"> Loyalty</label>
+            <label><input type="checkbox" id="layerCulture"> Culture</label>
+            <label><input type="checkbox" id="layerRoutes" checked> Roads & Rivers</label>
+            <label><input type="checkbox" id="layerPopulation"> Population Heatmap</label>
+            <label><input type="checkbox" id="showFullGrid"> Show Full Grid</label>
+          </div>
+          <div id="heatmapControls" hidden>
+            <label>Heatmap Scale</label>
+            <div class="radio-row inline">
+              <label><input type="radio" name="heatmapScale" value="log" checked> Logarithmic</label>
+              <label><input type="radio" name="heatmapScale" value="linear"> Linear</label>
+            </div>
+            <div class="heatmap-legend" id="heatmapLegend">
+              <div class="heatmap-legend-bar"></div>
+              <div class="heatmap-legend-labels">
+                <span>0</span>
+                <span id="heatmapLegendMid">—</span>
+                <span id="heatmapLegendMax">max</span>
+              </div>
+            </div>
+          </div>
+          <label>Tile Fill Opacity</label>
+          <input type="range" id="tileOpacitySlider" min="0" max="100" value="100">
+          <label>Zoom</label>
+          <div class="btn-row">
+            <button class="btn" id="zoomOutBtn">Zoom Out (-)</button>
+            <button class="btn" id="zoomInBtn">Zoom In (+)</button>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div id="bgEditBanner">Background Edit Mode — drag to move image, scroll to resize. Map is frozen.</div>
+    <div id="hud">
+      <div id="hud-stats"></div>
+      <div id="inspector-hud" class="inspector-hud"></div>
+    </div>
+  </main>
+
+</div>
+
+<div id="settingsModal" class="modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-labelledby="settingsTitle">
+    <h2 id="settingsTitle">Settings</h2>
+    <div class="field-row">
+      <div><label>Default width (hexes)<input type="number" id="settingsMapCols" value="40" min="2" max="300"></label></div>
+      <div><label>Default height (hexes)<input type="number" id="settingsMapRows" value="30" min="2" max="300"></label></div>
+    </div>
+    <p class="hint">These values fill Map Setup and are used the next time you generate a map.</p>
+    <div class="field-row">
+      <div>
+        <label>Autosave
+          <select id="settingsAutosave">
+            <option value="0">Off</option>
+            <option value="60000">1 minute</option>
+            <option value="120000">2 minutes</option>
+            <option value="300000">5 minutes</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div class="field-row">
+      <div>
+        <label>Max undo history
+          <input type="number" id="settingsMaxUndo" value="30" min="1">
+        </label>
+      </div>
+    </div>
+    <label class="check-row"><input type="checkbox" id="settingsPrefConfirmDeletes" checked> Confirm deletions and overwrites</label>
+    <label class="check-row"><input type="checkbox" id="settingsPrefConfirmCleanOcean" checked> Confirm before cleaning ocean tiles</label>
+    <label class="check-row"><input type="checkbox" id="settingsPrefWarnUnload" checked> Warn before closing or refreshing tab</label>
+    <label class="check-row"><input type="checkbox" id="settingsPrefPromptRestore" checked> Ask before restoring autosave on startup</label>
+    <label class="check-row"><input type="checkbox" id="settingsPrefOceanElevPop" checked> Use elevation/population/culture/loyalty tools on ocean tiles</label>
+    <div class="hint" id="settingsConfigStatus">Settings are saved in this browser.</div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="settingsApplyBtn">Apply</button>
+      <button class="btn" id="settingsRevertBtn">Revert to defaults</button>
+      <button class="btn" id="settingsCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="aboutModal" class="modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-labelledby="aboutTitle">
+    <h2 id="aboutTitle">About Cartographer</h2>
+    <p class="hint">Hex grand-strategy map editor.</p>
+    <div id="aboutBody"></div>
+    <button class="btn" id="aboutCloseBtn">Close</button>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
