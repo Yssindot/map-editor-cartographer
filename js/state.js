@@ -29,18 +29,18 @@ export const state = {
     elevation: 'hills',
     populationMode: 'set',
     populationAmount: 0,
-    owner: '',
+    ownerFactionId: '',
     regionId: null,
-    loyalty: '',
-    controller: '',
+    loyaltyFactionId: '',
+    controllerFactionId: '',
     culture: '',
     size: 1,
     routeStyle: 'river1',
     pathMode: 'draw',
     buildingTypeId: 'outpost',
-    buildingOwnerCode: '',
+    buildingOwnerFactionId: '',
     buildingName: '',
-    unitOwnerCode: '',
+    unitOwnerFactionId: '',
     unitName: '',
     unitPersonnel: 1000,
     unitNotes: ''
@@ -78,7 +78,7 @@ export const state = {
   regions: new Map(),
   nextRegionId: 1,
   factionDraft: null,
-  factionDraftOriginalName: null,
+  factionDraftOriginalId: null,
   factionCodeDirty: false
 };
 

@@ -11,7 +11,7 @@ import {
   getToolDef, skipOceanForTool, isWaterHex, routeWorldPolylines,
   validatePath, cloneWaypoints, getSelectedRoute, findRouteAtHex, isRouteBusy,
   routesOnHex, hexRegion, getRegion, buildingOwnerColor, formatBuildingHoverLine,
-  formatUnitHoverLine
+  formatUnitHoverLine, factionName
 } from './domain.js';
 
 export function drawBackgroundImage(){
@@ -75,7 +75,7 @@ export function drawHexes(){
 
   // 2. Draw Ownership Tints
   if (state.viewLayers.ownership){
-    drawTintBatches(visibleHexes, hex => hex.owner ? factionColor(hex.owner) : null, overlayAlpha);
+    drawTintBatches(visibleHexes, hex => hex.ownerFactionId ? factionColor(hex.ownerFactionId) : null, overlayAlpha);
   }
 
   // 3. Draw Loyalty Tints
@@ -243,23 +243,23 @@ export function drawFieldBorders(getValue, getColor, { dash = [], width = 3, sho
 
 export function drawOwnershipBorders(){
   if (!state.viewLayers.ownership) return;
-  drawFieldBorders(hex => hex.owner, (hex, name) => factionColor(name), { width: 3 });
+  drawFieldBorders(hex => hex.ownerFactionId, (hex, id) => factionColor(id), { width: 3 });
 }
 
 export function drawRegionBorders(){
   if (!state.viewLayers.regions) return;
   drawFieldBorders(
-    hex => (hex.region && getRegion(hex.region) && hex.owner) ? hex.region : null,
+    hex => (hex.region && getRegion(hex.region) && hex.ownerFactionId) ? hex.region : null,
     hex => {
       const rec = getRegion(hex.region);
-      const base = rec ? factionColor(rec.faction) : '#e8d6a0';
+      const base = rec ? factionColor(rec.factionId) : '#e8d6a0';
       return shiftHexHue(base, 22, 0.7, 1.28);
     },
     {
       width: 1.7,
       dash: [5, 3, 1.4, 3],
       shouldStroke(hex, neighbor){
-        if (!neighbor || !neighbor.owner || neighbor.owner !== hex.owner) return false;
+        if (!neighbor || !neighbor.ownerFactionId || neighbor.ownerFactionId !== hex.ownerFactionId) return false;
         return true;
       }
     }
@@ -268,13 +268,13 @@ export function drawRegionBorders(){
 
 export function drawLoyaltyBorders(){
   if (!state.viewLayers.loyalty) return;
-  drawFieldBorders(hex => hex.loyalty, hex => loyaltyFillColor(hex), { width: 2.4, dash: [7, 5] });
+  drawFieldBorders(hex => hex.loyaltyFactionId, hex => loyaltyFillColor(hex), { width: 2.4, dash: [7, 5] });
 }
 
 export function drawControllerBorders(){
   if (!state.viewLayers.controller) return;
   drawFieldBorders(
-    hex => (hex.controller && hex.controller !== hex.owner) ? hex.controller : null,
+    hex => (hex.controllerFactionId && hex.controllerFactionId !== hex.ownerFactionId) ? hex.controllerFactionId : null,
     hex => controllerFillColor(hex),
     { width: 2.6, dash: [3, 3, 10, 3] }
   );
@@ -545,13 +545,13 @@ export function drawBuildingMarkers(){
     if (hex.x < tl.x - margin || hex.x > br.x + margin || hex.y < tl.y - margin || hex.y > br.y + margin) continue;
 
     const groups = [];
-    const indexByCode = new Map();
+    const indexByOwner = new Map();
     for (const b of buildings){
-      const code = b.ownerFactionCode || '';
-      let group = indexByCode.get(code);
+      const ownerId = b.ownerFactionId || '';
+      let group = indexByOwner.get(ownerId);
       if (!group){
-        group = { code, count: 0 };
-        indexByCode.set(code, group);
+        group = { ownerId, count: 0 };
+        indexByOwner.set(ownerId, group);
         groups.push(group);
       }
       group.count += 1;
@@ -568,7 +568,7 @@ export function drawBuildingMarkers(){
       const cy = hex.y + pos.dy;
       ctx.beginPath();
       addHexToPath(ctx, cx, cy, badgeR);
-      ctx.fillStyle = buildingOwnerColor(group.code);
+      ctx.fillStyle = buildingOwnerColor(group.ownerId);
       ctx.fill();
       ctx.lineWidth = HEX_SIZE * 0.045;
       ctx.strokeStyle = 'rgba(255,255,255,0.92)';
@@ -599,15 +599,15 @@ export function drawUnitMarkers(){
     if (hex.x < tl.x - margin || hex.x > br.x + margin || hex.y < tl.y - margin || hex.y > br.y + margin) continue;
 
     const counts = new Map();
-    let dominant = { code: units[0].ownerFactionCode || '', count: 0 };
+    let dominant = { ownerId: units[0].ownerFactionId || '', count: 0 };
     for (const u of units){
-      const code = u.ownerFactionCode || '';
-      const next = (counts.get(code) || 0) + 1;
-      counts.set(code, next);
-      if (next > dominant.count) dominant = { code, count: next };
+      const ownerId = u.ownerFactionId || '';
+      const next = (counts.get(ownerId) || 0) + 1;
+      counts.set(ownerId, next);
+      if (next > dominant.count) dominant = { ownerId, count: next };
     }
 
-    const color = buildingOwnerColor(dominant.code);
+    const color = buildingOwnerColor(dominant.ownerId);
     const cx = hex.x;
     const cy = hex.y + HEX_SIZE * 0.42;
     const r = HEX_SIZE * (units.length > 1 ? 0.20 : 0.16);
@@ -695,7 +695,7 @@ export function updateInspector(hex){
     const units = hex.units || [];
     const listHtml = units.length
       ? units.map(u => {
-          return `<div class="inspector-row building-hover-row"><span class="building-faction-swatch" style="background:${buildingOwnerColor(u.ownerFactionCode)}"></span> ${formatUnitHoverLine(u)}</div>`;
+          return `<div class="inspector-row building-hover-row"><span class="building-faction-swatch" style="background:${buildingOwnerColor(u.ownerFactionId)}"></span> ${formatUnitHoverLine(u)}</div>`;
         }).join('')
       : '<div class="inspector-row">Units: None</div>';
     inspectorHudEl.innerHTML = `
@@ -709,7 +709,7 @@ export function updateInspector(hex){
     const listHtml = buildings.length
       ? buildings.map(b => {
           const opClass = b.operational === false ? 'inactive' : 'active';
-          return `<div class="inspector-row building-hover-row"><span class="op-dot ${opClass}"></span><span class="building-faction-swatch" style="background:${buildingOwnerColor(b.ownerFactionCode)}"></span> ${formatBuildingHoverLine(b)}</div>`;
+          return `<div class="inspector-row building-hover-row"><span class="op-dot ${opClass}"></span><span class="building-faction-swatch" style="background:${buildingOwnerColor(b.ownerFactionId)}"></span> ${formatBuildingHoverLine(b)}</div>`;
         }).join('')
       : '<div class="inspector-row">Buildings: None</div>';
     inspectorHudEl.innerHTML = `
@@ -733,11 +733,11 @@ export function updateInspector(hex){
   ];
   if (hex.elevation && hex.elevation !== 'flat') rows.push(`<div class="inspector-row"><b>Elev</b> ${elevLabel}</div>`);
   if (hex.population) rows.push(`<div class="inspector-row"><b>Pop</b> ${hex.population}</div>`);
-  if (hex.owner) rows.push(`<div class="inspector-row"><b>Faction</b> ${hex.owner}</div>`);
+  if (hex.ownerFactionId) rows.push(`<div class="inspector-row"><b>Faction</b> ${factionName(hex.ownerFactionId) || '—'}</div>`);
   if (regionRec) rows.push(`<div class="inspector-row"><b>Region</b> ${regionRec.name}</div>`);
   if (capitalOf.length) rows.push(`<div class="inspector-row"><b>Capital</b> ${capitalOf.join(', ')}</div>`);
-  if (hex.controller && hex.controller !== hex.owner) rows.push(`<div class="inspector-row"><b>De facto</b> ${hex.controller}</div>`);
-  if (hex.loyalty) rows.push(`<div class="inspector-row"><b>Loyalty</b> ${hex.loyalty}</div>`);
+  if (hex.controllerFactionId && hex.controllerFactionId !== hex.ownerFactionId) rows.push(`<div class="inspector-row"><b>De facto</b> ${factionName(hex.controllerFactionId) || '—'}</div>`);
+  if (hex.loyaltyFactionId) rows.push(`<div class="inspector-row"><b>Loyalty</b> ${factionName(hex.loyaltyFactionId) || '—'}</div>`);
   if (hex.culture) rows.push(`<div class="inspector-row"><b>Culture</b> ${hex.culture}</div>`);
   if (hex.cityName) rows.push(`<div class="inspector-row"><b>City</b> ${hex.cityName}</div>`);
   if (onRoutes.length) rows.push(`<div class="inspector-row"><b>Routes</b> ${onRoutes.join(', ')}</div>`);

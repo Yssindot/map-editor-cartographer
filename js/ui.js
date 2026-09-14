@@ -2,7 +2,7 @@ import { state } from './state.js';
 import {
   HEX_SIZE, MIN_ZOOM, MAX_ZOOM, DEFAULT_MAX_UNDO, DEFAULT_MAP_COLS, DEFAULT_MAP_ROWS,
   DEFAULT_TILE_OPACITY, DEFAULT_TERRAIN_DEFS, DEFAULT_AUTOSAVE_MS, LEGACY_TERRAIN_IDS,
-  APP_VERSION, ELEVATION_LABELS, ROUTE_DEFS, ROUTE_BY_ID, ROUTE_DRAW_ORDER,
+  APP_VERSION, MAP_META_VERSION, ELEVATION_LABELS, ROUTE_DEFS, ROUTE_BY_ID, ROUTE_DRAW_ORDER,
   FACTION_TYPES, FACTION_TYPE_LABELS, FACTION_CODE_LEN, FLAG_MAX_EDGE,
   AUTOSAVE_KEY, SETTINGS_KEY
 } from './constants.js';
@@ -17,20 +17,22 @@ import {
   persistAutosave, setAutosaveInterval, prefBool, applyPrefsFromObject,
   invalidateFactionCache, invalidatePopulationStats, syncFactionCapitals,
   ensureFactionCodes, pruneUnusedCultures, restoreRoutes, cloneWaypoints,
-  routeMouths, makeFaction,
-  ensureFaction, ensureCulture, cultureColor, peekCultureColor, factionColor,
-  factionHexCount, getFactionCounts, sortedFactionNames,
+  cloneHex, snapshotRegions, refreshPathUi, routeMouths, makeFaction,
+  ensureCulture, cultureColor, peekCultureColor, factionColor,
+  factionHexCount, getFactionCounts, sortedFactions, getFaction, factionName,
   uniqueFactionName, suggestFactionCode, normalizeFactionCode, formatFactionCode,
-  isFactionCodeFree, cloneCapital, findFactionNameByCode, retargetFactionName,
-  getFactionCapitalHex, factionsWithCapitalAt, setFactionCapital,
+  isFactionCodeFree, isFactionNameFree, cloneCapital, findFactionByCode, retargetFactionName,
+  getFactionCapitalHex, factionsWithCapitalAt, setFactionCapital, stripRegionsOfFaction, stripFactionEntityRefs,
   getRegion, hexRegion, createRegion, deleteRegionById, regionsForFaction, getRegionCounts, restoreRegions,
+  cloneCultureRecord,
   routesOnHex, routeCells,
   getSelectedRoute, cancelPathDraft, selectRoute, deleteRouteById, renameRoute,
   applyBrush, paintAtScreen, getHexAtScreen, applyZoom, handlePathClick,
   finishRouteDrag, parseBuildingTypes, parseBuildings, parseUnits, upsertBuildingType,
   getBuildingType, renameBuildingOnHex, deleteBuildingOnHex, toggleBuildingOperational,
   formatBuildingHoverLine, formatUnitHoverLine, buildingOwnerColor,
-  stampUnitOnHex, renameUnitOnHex, deleteUnitOnHex
+  stampUnitOnHex, renameUnitOnHex, deleteUnitOnHex,
+  formatPop
 } from './domain.js';
 
 function getMousePos(e){
@@ -298,7 +300,7 @@ export function setActiveTool(id){
   if (id === 'region'){
     const faction = regionFactionFilter();
     const current = getRegion(state.brush.regionId);
-    if (!current || current.faction !== faction){
+    if (!current || current.factionId !== faction){
       const first = regionsForFaction(faction)[0];
       state.brush.regionId = first ? first.id : null;
     }
@@ -586,54 +588,54 @@ function fillFactionSelect(selectEl, selected, blankLabel){
   blank.value = '';
   blank.textContent = blankLabel;
   selectEl.appendChild(blank);
-  for (const name of sortedFactionNames()){
+  for (const rec of sortedFactions()){
     const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = `${name} — ${FACTION_TYPE_LABELS[state.factions.get(name).type]}`;
+    opt.value = rec.id;
+    opt.textContent = `${rec.name} — ${FACTION_TYPE_LABELS[rec.type]}`;
     selectEl.appendChild(opt);
   }
-  selectEl.value = state.factions.has(selected) ? selected : '';
+  selectEl.value = getFaction(selected) ? selected : '';
 }
 
-function setBrushSwatch(el, name, gray){
+function setBrushSwatch(el, id, gray){
   if (!el) return;
-  if (!name || !state.factions.has(name)){
+  if (!id || !getFaction(id)){
     el.style.background = 'transparent';
     el.style.borderStyle = 'dashed';
     return;
   }
   el.style.borderStyle = 'solid';
-  el.style.background = gray && factionHexCount(name) === 0 ? grayLoyaltyColor(name) : factionColor(name);
+  el.style.background = gray && factionHexCount(id) === 0 ? grayLoyaltyColor(id) : factionColor(id);
 }
 
 export function syncFactionBrushInputs(){
-  if (!state.factions.has(state.brush.owner)) state.brush.owner = '';
-  if (!state.factions.has(state.brush.loyalty)) state.brush.loyalty = '';
-  if (!state.factions.has(state.brush.controller)) state.brush.controller = '';
-  fillFactionSelect(ownerSelectEl, state.brush.owner, '— No faction (erase) —');
-  fillFactionSelect(loyaltySelectEl, state.brush.loyalty, '— No loyalty (erase) —');
-  fillFactionSelect(controllerSelectEl, state.brush.controller, '— No control (erase) —');
-  setBrushSwatch(ownerSwatchEl, state.brush.owner, false);
-  setBrushSwatch(loyaltySwatchEl, state.brush.loyalty, true);
-  setBrushSwatch(controllerSwatchEl, state.brush.controller, true);
-  editOwnerFactionBtn.disabled = !state.brush.owner;
-  editLoyaltyFactionBtn.disabled = !state.brush.loyalty;
-  editControllerFactionBtn.disabled = !state.brush.controller;
+  if (!getFaction(state.brush.ownerFactionId)) state.brush.ownerFactionId = '';
+  if (!getFaction(state.brush.loyaltyFactionId)) state.brush.loyaltyFactionId = '';
+  if (!getFaction(state.brush.controllerFactionId)) state.brush.controllerFactionId = '';
+  fillFactionSelect(ownerSelectEl, state.brush.ownerFactionId, '— No faction (erase) —');
+  fillFactionSelect(loyaltySelectEl, state.brush.loyaltyFactionId, '— No loyalty (erase) —');
+  fillFactionSelect(controllerSelectEl, state.brush.controllerFactionId, '— No control (erase) —');
+  setBrushSwatch(ownerSwatchEl, state.brush.ownerFactionId, false);
+  setBrushSwatch(loyaltySwatchEl, state.brush.loyaltyFactionId, true);
+  setBrushSwatch(controllerSwatchEl, state.brush.controllerFactionId, true);
+  editOwnerFactionBtn.disabled = !state.brush.ownerFactionId;
+  editLoyaltyFactionBtn.disabled = !state.brush.loyaltyFactionId;
+  editControllerFactionBtn.disabled = !state.brush.controllerFactionId;
   syncUnitBrushInputs();
 }
 
 ownerSelectEl.addEventListener('change', () => {
-  state.brush.owner = ownerSelectEl.value;
+  state.brush.ownerFactionId = ownerSelectEl.value;
   syncFactionBrushInputs();
 });
 
 loyaltySelectEl.addEventListener('change', () => {
-  state.brush.loyalty = loyaltySelectEl.value;
+  state.brush.loyaltyFactionId = loyaltySelectEl.value;
   syncFactionBrushInputs();
 });
 
 controllerSelectEl.addEventListener('change', () => {
-  state.brush.controller = controllerSelectEl.value;
+  state.brush.controllerFactionId = controllerSelectEl.value;
   syncFactionBrushInputs();
 });
 
@@ -650,11 +652,11 @@ let regionSelectSilent = false;
 
 function regionFactionFilter(){
   const selected = regionFactionSelectEl ? regionFactionSelectEl.value : '';
-  if (state.factions.has(selected)) return selected;
+  if (getFaction(selected)) return selected;
   const rec = getRegion(state.brush.regionId);
-  if (rec && state.factions.has(rec.faction)) return rec.faction;
-  const names = sortedFactionNames();
-  return names[0] || '';
+  if (rec && getFaction(rec.factionId)) return rec.factionId;
+  const listed = sortedFactions();
+  return listed[0] ? listed[0].id : '';
 }
 
 function fillSelectOptions(selectEl, options, value){
@@ -695,13 +697,13 @@ export function syncRegionBrushInputs(){
   } else {
     fillSelectOptions(
       regionFactionSelectEl,
-      sortedFactionNames().map(name => ({ value: name, label: name })),
+      sortedFactions().map(rec => ({ value: rec.id, label: rec.name })),
       faction
     );
   }
   const listed = regionsForFaction(faction);
   const current = getRegion(state.brush.regionId);
-  if (current && current.faction !== faction){
+  if (current && current.factionId !== faction){
     state.brush.regionId = null;
   }
   const selected = getRegion(state.brush.regionId);
@@ -737,7 +739,7 @@ export function syncRegionBrushInputs(){
 regionFactionSelectEl.addEventListener('change', () => {
   if (regionSelectSilent) return;
   const rec = getRegion(state.brush.regionId);
-  if (!rec || rec.faction !== regionFactionSelectEl.value){
+  if (!rec || rec.factionId !== regionFactionSelectEl.value){
     const first = regionsForFaction(regionFactionSelectEl.value)[0];
     state.brush.regionId = first ? first.id : null;
   }
@@ -841,15 +843,15 @@ cultureColorInputEl.addEventListener('input', e => {
   render();
 });
 
-function factionBadge(name){
-  const rec = state.factions.get(name);
+function factionBadge(id){
+  const rec = getFaction(id);
   const el = document.createElement('span');
   el.className = 'faction-badge';
   if (rec && rec.flag){
     el.classList.add('has-flag');
     el.style.backgroundImage = `url("${rec.flag}")`;
   } else {
-    el.style.background = rec ? rec.color : grayLoyaltyColor(name);
+    el.style.background = rec ? rec.color : grayLoyaltyColor(id);
   }
   return el;
 }
@@ -863,8 +865,8 @@ function updateFactionsDrawerCounts(){
   let loyalty = 0, controller = 0, culture = 0;
   const seenL = new Set(), seenC = new Set(), seenU = new Set();
   for (const hex of state.hexes.values()){
-    if (hex.loyalty && !seenL.has(hex.loyalty)){ seenL.add(hex.loyalty); loyalty++; }
-    if (hex.controller && !seenC.has(hex.controller)){ seenC.add(hex.controller); controller++; }
+    if (hex.loyaltyFactionId && !seenL.has(hex.loyaltyFactionId)){ seenL.add(hex.loyaltyFactionId); loyalty++; }
+    if (hex.controllerFactionId && !seenC.has(hex.controllerFactionId)){ seenC.add(hex.controllerFactionId); controller++; }
     if (hex.culture && !seenU.has(hex.culture)){ seenU.add(hex.culture); culture++; }
   }
   setDrawerCount('factionDrawerCount', state.factions.size);
@@ -894,21 +896,20 @@ export function refreshFactionList(){
   }
 
   const counts = getFactionCounts();
-  const sorted = sortedFactionNames().sort((a, b) => (counts.get(b) || 0) - (counts.get(a) || 0) || a.localeCompare(b));
-  for (const name of sorted){
-    const rec = state.factions.get(name);
-    const count = counts.get(name) || 0;
+  const sorted = sortedFactions().sort((a, b) => (counts.get(b.id) || 0) - (counts.get(a.id) || 0) || a.name.localeCompare(b.name));
+  for (const rec of sorted){
+    const count = counts.get(rec.id) || 0;
     const row = document.createElement('div');
     row.className = 'country-row';
 
-    row.appendChild(factionBadge(name));
+    row.appendChild(factionBadge(rec.id));
 
     const nameEl = document.createElement('span');
     nameEl.className = 'country-name';
-    nameEl.textContent = rec.capital ? `${name} 👑` : name;
+    nameEl.textContent = rec.capital ? `${rec.name} 👑` : rec.name;
     nameEl.title = `${FACTION_TYPE_LABELS[rec.type]}${rec.ideology ? ' · ' + rec.ideology : ''} — click to paint with this faction`;
     nameEl.addEventListener('click', () => {
-      state.brush.owner = name;
+      state.brush.ownerFactionId = rec.id;
       syncFactionBrushInputs();
       setActiveTool('owner');
     });
@@ -928,7 +929,7 @@ export function refreshFactionList(){
     editBtn.title = 'Open in the Faction Editor';
     editBtn.addEventListener('click', e => {
       e.stopPropagation();
-      openFactionEditor(name);
+      openFactionEditor(rec.id);
     });
 
     const deleteBtn = document.createElement('button');
@@ -937,7 +938,7 @@ export function refreshFactionList(){
     deleteBtn.title = 'Delete faction';
     deleteBtn.addEventListener('click', e => {
       e.stopPropagation();
-      confirmDeleteFaction(name);
+      confirmDeleteFaction(rec.id);
     });
 
     actionsEl.appendChild(editBtn);
@@ -966,7 +967,7 @@ export function refreshRegionList(){
   }
   const counts = getRegionCounts();
   const sorted = Array.from(state.regions.values()).sort((a, b) => {
-    const fa = a.faction.localeCompare(b.faction);
+    const fa = factionName(a.factionId).localeCompare(factionName(b.factionId));
     if (fa) return fa;
     return a.name.localeCompare(b.name);
   });
@@ -976,13 +977,13 @@ export function refreshRegionList(){
 
     const swatch = document.createElement('span');
     swatch.className = 'swatch-color';
-    swatch.style.background = state.factions.has(rec.faction) ? factionColor(rec.faction) : '#888';
-    swatch.title = rec.faction || 'No faction';
+    swatch.style.background = getFaction(rec.factionId) ? factionColor(rec.factionId) : '#888';
+    swatch.title = factionName(rec.factionId) || 'No faction';
 
     const nameEl = document.createElement('span');
     nameEl.className = 'country-name';
     nameEl.textContent = `${rec.name} · ${rec.type}`;
-    nameEl.title = `${rec.type}${rec.governor ? ' · ' + rec.governor : ''} — ${rec.faction || 'unassigned'} — click to paint`;
+    nameEl.title = `${rec.type}${rec.governor ? ' · ' + rec.governor : ''} — ${factionName(rec.factionId) || 'unassigned'} — click to paint`;
     nameEl.addEventListener('click', () => {
       state.brush.regionId = rec.id;
       syncRegionBrushInputs();
@@ -993,7 +994,7 @@ export function refreshRegionList(){
     const metaEl = document.createElement('span');
     metaEl.className = 'country-count';
     metaEl.textContent = counts.get(rec.id) || 0;
-    metaEl.title = `${rec.type} of ${rec.faction || '—'}`;
+    metaEl.title = `${rec.type} of ${factionName(rec.factionId) || '—'}`;
 
     const actionsEl = document.createElement('div');
     actionsEl.className = 'country-actions';
@@ -1041,7 +1042,7 @@ export function refreshRegionList(){
 export function refreshLoyaltyList(){
   const counts = new Map();
   for (const hex of state.hexes.values()){
-    if (hex.loyalty) counts.set(hex.loyalty, (counts.get(hex.loyalty) || 0) + 1);
+    if (hex.loyaltyFactionId) counts.set(hex.loyaltyFactionId, (counts.get(hex.loyaltyFactionId) || 0) + 1);
   }
   const listEl = document.getElementById('loyaltyList');
   listEl.innerHTML = '';
@@ -1051,24 +1052,24 @@ export function refreshLoyaltyList(){
     return;
   }
   const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-  for (const [name, count] of sorted){
-    const landless = factionHexCount(name) === 0;
+  for (const [id, count] of sorted){
+    const landless = factionHexCount(id) === 0;
     const row = document.createElement('div');
     row.className = 'country-row';
 
     const swatch = document.createElement('span');
     swatch.className = 'swatch-color';
-    swatch.style.background = landless ? grayLoyaltyColor(name) : factionColor(name);
+    swatch.style.background = landless ? grayLoyaltyColor(id) : factionColor(id);
     swatch.title = landless
       ? 'Landless faction — loyalty to it is shown in gray'
       : 'Hexes it also owns use its color, hexes owned by someone else are shifted';
 
     const nameEl = document.createElement('span');
     nameEl.className = 'country-name';
-    nameEl.textContent = name;
+    nameEl.textContent = factionName(id) || id;
     nameEl.title = 'Click to set as the active loyalty brush';
     nameEl.addEventListener('click', () => {
-      state.brush.loyalty = name;
+      state.brush.loyaltyFactionId = id;
       syncFactionBrushInputs();
       setActiveTool('loyalty');
     });
@@ -1084,10 +1085,10 @@ export function refreshLoyaltyList(){
     editBtn.className = 'btn-icon-sm';
     editBtn.innerHTML = '✎';
     editBtn.title = 'Open this faction in the Faction Editor';
-    editBtn.disabled = !state.factions.has(name);
+    editBtn.disabled = !getFaction(id);
     editBtn.addEventListener('click', e => {
       e.stopPropagation();
-      openFactionEditor(name);
+      openFactionEditor(id);
     });
 
     const deleteBtn = document.createElement('button');
@@ -1096,8 +1097,9 @@ export function refreshLoyaltyList(){
     deleteBtn.title = 'Clear this loyalty';
     deleteBtn.addEventListener('click', e => {
       e.stopPropagation();
-      if (!state.prefConfirmDeletes || confirm(`Clear loyalty "${name}" from all hexes? The faction itself is kept.`)) {
-        clearLoyalty(name);
+      const label = factionName(id) || id;
+      if (!state.prefConfirmDeletes || confirm(`Clear loyalty "${label}" from all hexes? The faction itself is kept.`)) {
+        clearLoyalty(id);
       }
     });
 
@@ -1116,7 +1118,7 @@ export function refreshLoyaltyList(){
 export function refreshControllerList(){
   const counts = new Map();
   for (const hex of state.hexes.values()){
-    if (hex.controller) counts.set(hex.controller, (counts.get(hex.controller) || 0) + 1);
+    if (hex.controllerFactionId) counts.set(hex.controllerFactionId, (counts.get(hex.controllerFactionId) || 0) + 1);
   }
   const listEl = document.getElementById('controllerList');
   listEl.innerHTML = '';
@@ -1126,24 +1128,24 @@ export function refreshControllerList(){
     return;
   }
   const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-  for (const [name, count] of sorted){
-    const landless = factionHexCount(name) === 0;
+  for (const [id, count] of sorted){
+    const landless = factionHexCount(id) === 0;
     const row = document.createElement('div');
     row.className = 'country-row';
 
     const swatch = document.createElement('span');
     swatch.className = 'swatch-color';
-    swatch.style.background = landless ? grayLoyaltyColor(name) : factionColor(name);
+    swatch.style.background = landless ? grayLoyaltyColor(id) : factionColor(id);
     swatch.title = landless
       ? 'Landless faction — de facto control by it is shown in gray hatch'
       : 'Hexes it also owns use its color, occupied hexes are shifted';
 
     const nameEl = document.createElement('span');
     nameEl.className = 'country-name';
-    nameEl.textContent = name;
+    nameEl.textContent = factionName(id) || id;
     nameEl.title = 'Click to set as the active de facto brush';
     nameEl.addEventListener('click', () => {
-      state.brush.controller = name;
+      state.brush.controllerFactionId = id;
       syncFactionBrushInputs();
       setActiveTool('controller');
     });
@@ -1159,10 +1161,10 @@ export function refreshControllerList(){
     editBtn.className = 'btn-icon-sm';
     editBtn.innerHTML = '✎';
     editBtn.title = 'Open this faction in the Faction Editor';
-    editBtn.disabled = !state.factions.has(name);
+    editBtn.disabled = !getFaction(id);
     editBtn.addEventListener('click', e => {
       e.stopPropagation();
-      openFactionEditor(name);
+      openFactionEditor(id);
     });
 
     const deleteBtn = document.createElement('button');
@@ -1171,8 +1173,9 @@ export function refreshControllerList(){
     deleteBtn.title = 'Clear this de facto control';
     deleteBtn.addEventListener('click', e => {
       e.stopPropagation();
-      if (!state.prefConfirmDeletes || confirm(`Clear de facto control "${name}" from all hexes? The faction itself is kept.`)) {
-        clearController(name);
+      const label = factionName(id) || id;
+      if (!state.prefConfirmDeletes || confirm(`Clear de facto control "${label}" from all hexes? The faction itself is kept.`)) {
+        clearController(id);
       }
     });
 
@@ -1353,75 +1356,50 @@ function refreshFactionUi(){
   render();
 }
 
-/* Writes the editor draft back into the map. Renaming carries owner, loyalty
-   and de facto controller references across with it, so hexes never point at a faction that is gone. */
-function saveFaction(originalName, draft){
-  const name = draft.name;
+/* Writes the editor draft back into the map. Names and codes are display
+   fields; hex, region, building, and unit references stay on the faction id. */
+function saveFaction(originalId, draft){
   beginAction();
-
-  if (originalName && originalName !== name){
-    for (const hex of state.hexes.values()){
-      if (hex.owner !== originalName && hex.loyalty !== originalName && hex.controller !== originalName) continue;
-      markHexForUndo(hex);
-      if (hex.owner === originalName) hex.owner = name;
-      if (hex.loyalty === originalName) hex.loyalty = name;
-      if (hex.controller === originalName) hex.controller = name;
-    }
-    for (const rec of state.regions.values()){
-      if (rec.faction === originalName) rec.faction = name;
-    }
-    state.factions.delete(originalName);
-    if (state.brush.owner === originalName) state.brush.owner = name;
-    if (state.brush.loyalty === originalName) state.brush.loyalty = name;
-    if (state.brush.controller === originalName) state.brush.controller = name;
-  }
-
-  state.factions.set(name, makeFaction(name, draft));
+  const rec = makeFaction({ ...draft, id: originalId || draft.id });
+  state.factions.set(rec.id, rec);
   invalidateFactionCache();
   commitAction();
 
-  if (!originalName) state.brush.owner = name;
+  if (!originalId) state.brush.ownerFactionId = rec.id;
   refreshFactionUi();
 }
 
-function deleteFaction(name){
+function deleteFaction(id){
+  const rec = getFaction(id);
+  if (!rec) return;
   beginAction();
-  for (const hex of state.hexes.values()){
-    if (hex.owner !== name && hex.loyalty !== name && hex.controller !== name) continue;
-    markHexForUndo(hex);
-    if (hex.owner === name) hex.owner = null;
-    if (hex.loyalty === name) hex.loyalty = null;
-    if (hex.controller === name) hex.controller = null;
-  }
-  for (const rec of Array.from(state.regions.values())){
-    if (rec.faction === name) deleteRegionById(rec.id);
-  }
-  state.factions.delete(name);
+  stripFactionEntityRefs(id);
+  stripRegionsOfFaction(id);
+  state.factions.delete(id);
   invalidateFactionCache();
-  if (state.brush.owner === name) state.brush.owner = '';
-  if (state.brush.loyalty === name) state.brush.loyalty = '';
-  if (state.brush.controller === name) state.brush.controller = '';
   commitAction();
   refreshFactionUi();
 }
 
-function confirmDeleteFaction(name){
-  const owned = factionHexCount(name);
+function confirmDeleteFaction(id){
+  const rec = getFaction(id);
+  if (!rec) return false;
+  const owned = factionHexCount(id);
   const territory = owned > 0 ? ` It owns ${owned} hex${owned === 1 ? '' : 'es'}, which become unowned.` : '';
-  if (state.prefConfirmDeletes && !confirm(`Delete faction "${name}"?${territory} Loyalty, de facto control, and administrative regions of it are cleared too.`)) return false;
-  deleteFaction(name);
+  if (state.prefConfirmDeletes && !confirm(`Delete faction "${rec.name}"?${territory} Loyalty, de facto control, and administrative regions of it are cleared too.`)) return false;
+  deleteFaction(id);
   return true;
 }
 
-function clearLoyalty(name){
+function clearLoyalty(id){
   beginAction();
   for (const hex of state.hexes.values()){
-    if (hex.loyalty === name){
+    if (hex.loyaltyFactionId === id){
       markHexForUndo(hex);
-      hex.loyalty = null;
+      hex.loyaltyFactionId = null;
     }
   }
-  if (state.brush.loyalty === name) state.brush.loyalty = '';
+  if (state.brush.loyaltyFactionId === id) state.brush.loyaltyFactionId = '';
   commitAction();
   refreshLoyaltyList();
   syncFactionBrushInputs();
@@ -1429,15 +1407,15 @@ function clearLoyalty(name){
   render();
 }
 
-function clearController(name){
+function clearController(id){
   beginAction();
   for (const hex of state.hexes.values()){
-    if (hex.controller === name){
+    if (hex.controllerFactionId === id){
       markHexForUndo(hex);
-      hex.controller = null;
+      hex.controllerFactionId = null;
     }
   }
-  if (state.brush.controller === name) state.brush.controller = '';
+  if (state.brush.controllerFactionId === id) state.brush.controllerFactionId = '';
   commitAction();
   refreshControllerList();
   syncFactionBrushInputs();
@@ -1523,16 +1501,17 @@ function syncFactionEditorFields(){
   syncFactionCapitalLabel();
 }
 
-function openFactionEditor(name){
-  const rec = name ? state.factions.get(name) : null;
-  state.factionDraftOriginalName = rec ? name : null;
-  const draftName = rec ? name : uniqueFactionName('New Faction');
-  const base = rec || makeFaction(draftName);
+function openFactionEditor(id){
+  const rec = id ? getFaction(id) : null;
+  state.factionDraftOriginalId = rec ? rec.id : null;
+  const draftName = rec ? rec.name : uniqueFactionName('New Faction');
+  const base = rec || makeFaction({ name: draftName });
   /* A code the user has not typed yet keeps following the name field. */
   state.factionCodeDirty = !!(rec && rec.code);
   state.factionDraft = {
+    id: rec ? rec.id : base.id,
     name: draftName,
-    code: base.code || suggestFactionCode(draftName, state.factionDraftOriginalName),
+    code: base.code || suggestFactionCode(draftName, state.factionDraftOriginalId),
     color: base.color,
     type: base.type,
     ideology: base.ideology,
@@ -1552,7 +1531,7 @@ function openFactionEditor(name){
 
 export function closeFactionEditor(){
   state.factionDraft = null;
-  state.factionDraftOriginalName = null;
+  state.factionDraftOriginalId = null;
   state.factionCodeDirty = false;
   factionFlagFileEl.value = '';
   closeModal('factionModal');
@@ -1580,7 +1559,7 @@ function applyFactionForm(){
     factionNameInputEl.focus();
     return false;
   }
-  if (name !== state.factionDraftOriginalName && state.factions.has(name)){
+  if (!isFactionNameFree(name, state.factionDraftOriginalId)){
     alert(`A faction called "${name}" already exists.`);
     factionNameInputEl.focus();
     return false;
@@ -1591,7 +1570,7 @@ function applyFactionForm(){
     factionCodeInputEl.focus();
     return false;
   }
-  if (!isFactionCodeFree(code, state.factionDraftOriginalName)){
+  if (!isFactionCodeFree(code, state.factionDraftOriginalId)){
     alert(`The code ${formatFactionCode(code)} already belongs to another faction.`);
     factionCodeInputEl.focus();
     return false;
@@ -1608,7 +1587,7 @@ function applyFactionForm(){
 function commitFactionEditor(){
   if (!state.factionDraft || !applyFactionForm()) return;
 
-  const original = state.factionDraftOriginalName;
+  const original = state.factionDraftOriginalId;
   const draft = state.factionDraft;
   closeFactionEditor();
   saveFaction(original, draft);
@@ -1625,7 +1604,7 @@ function commitFactionEditor(){
 
 factionNameInputEl.addEventListener('input', e => {
   if (!state.factionDraft || state.factionCodeDirty) return;
-  factionCodeInputEl.value = suggestFactionCode(e.target.value, state.factionDraftOriginalName);
+  factionCodeInputEl.value = suggestFactionCode(e.target.value, state.factionDraftOriginalId);
 });
 
 factionCodeInputEl.addEventListener('input', e => {
@@ -1669,17 +1648,18 @@ factionCapitalClearBtn.addEventListener('click', () => {
 });
 
 factionDeleteBtn.addEventListener('click', () => {
-  const name = state.factionDraftOriginalName;
-  if (!name) return;
-  if (confirmDeleteFaction(name)) closeFactionEditor();
+  const id = state.factionDraftOriginalId;
+  if (!id) return;
+  if (confirmDeleteFaction(id)) closeFactionEditor();
 });
 
 /* Factions travel between tools on their own, without the rest of the map. The
    file shape matches the `factions` array of a map export, so a map.json or a
    Lorekeeper scenario (which also has `factions`) can be fed into the importer. */
-function factionFileEntry(name, rec){
+function factionFileEntry(rec){
   return {
-    name,
+    id: rec.id,
+    name: rec.name,
     code: formatFactionCode(rec.code),
     type: rec.type,
     ideology: rec.ideology,
@@ -1716,28 +1696,28 @@ function mergeImportedFaction(raw){
   if (!raw || typeof raw !== 'object') return null;
   const wanted = typeof raw.name === 'string' ? raw.name.trim() : '';
   const code = normalizeFactionCode(raw.code);
-  const byCode = (code.length === FACTION_CODE_LEN) ? findFactionNameByCode(code) : null;
+  const incomingId = typeof raw.id === 'string' ? raw.id.trim() : '';
+  let existing = incomingId ? getFaction(incomingId) : null;
+  if (!existing && code.length === FACTION_CODE_LEN) existing = findFactionByCode(code);
 
-  if (byCode){
-    const existing = state.factions.get(byCode);
-    let destName = byCode;
-    if (wanted && wanted !== byCode){
-      destName = (state.factions.has(wanted) && wanted !== byCode) ? byCode : wanted;
-    }
-    if (destName !== byCode) retargetFactionName(byCode, destName);
-    const rec = makeFaction(destName, { ...raw, code });
-    rec.code = code;
-    if (!rec.capital && existing && existing.capital) rec.capital = cloneCapital(existing.capital);
-    if (!rec.flag && existing && existing.flag) rec.flag = existing.flag;
-    state.factions.set(destName, rec);
-    return { kind: 'updated', name: destName };
+  if (existing){
+    let destName = wanted || existing.name;
+    if (!isFactionNameFree(destName, existing.id)) destName = uniqueFactionName(destName, existing.id);
+    if (destName !== existing.name) retargetFactionName(existing.id, destName);
+    const rec = makeFaction({ ...raw, id: existing.id, name: destName, code: code || existing.code });
+    rec.code = code.length === FACTION_CODE_LEN ? code : existing.code;
+    if (!rec.capital && existing.capital) rec.capital = cloneCapital(existing.capital);
+    if (!rec.flag && existing.flag) rec.flag = existing.flag;
+    state.factions.set(existing.id, rec);
+    return { kind: 'updated', name: rec.name };
   }
 
   if (!wanted) return null;
   const name = uniqueFactionName(wanted);
-  const rec = makeFaction(name, raw);
-  if (rec.code.length !== FACTION_CODE_LEN || !isFactionCodeFree(rec.code)) rec.code = suggestFactionCode(name);
-  state.factions.set(name, rec);
+  const rec = makeFaction({ ...raw, id: (incomingId && !getFaction(incomingId)) ? incomingId : undefined, name });
+  rec.name = name;
+  if (rec.code.length !== FACTION_CODE_LEN || !isFactionCodeFree(rec.code, rec.id)) rec.code = suggestFactionCode(name, rec.id);
+  state.factions.set(rec.id, rec);
   return { kind: 'added', name };
 }
 
@@ -1787,9 +1767,9 @@ factionExportBtn.addEventListener('click', () => {
   if (!state.factionDraft || !applyFactionForm()) return;
   downloadJson({
     format: 'cartographer-factions',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
-    factions: [factionFileEntry(state.factionDraft.name, state.factionDraft)]
+    factions: [factionFileEntry(state.factionDraft)]
   }, `${formatFactionCode(state.factionDraft.code)}.json`);
 });
 
@@ -1806,13 +1786,13 @@ document.getElementById('factionCancelBtn').addEventListener('click', closeFacti
 document.getElementById('newFactionBtn').addEventListener('click', () => openFactionEditor(null));
 document.getElementById('newOwnerFactionBtn').addEventListener('click', () => openFactionEditor(null));
 editOwnerFactionBtn.addEventListener('click', () => {
-  if (state.brush.owner) openFactionEditor(state.brush.owner);
+  if (state.brush.ownerFactionId) openFactionEditor(state.brush.ownerFactionId);
 });
 editLoyaltyFactionBtn.addEventListener('click', () => {
-  if (state.brush.loyalty) openFactionEditor(state.brush.loyalty);
+  if (state.brush.loyaltyFactionId) openFactionEditor(state.brush.loyaltyFactionId);
 });
 editControllerFactionBtn.addEventListener('click', () => {
-  if (state.brush.controller) openFactionEditor(state.brush.controller);
+  if (state.brush.controllerFactionId) openFactionEditor(state.brush.controllerFactionId);
 });
 
 function renameCulture(oldName, newName){
@@ -1914,24 +1894,22 @@ function syncBuildingTypeSelect(){
 
 function syncBuildingBrushInputs(){
   if (!buildingFactionSelectEl) return;
-  const prev = state.brush.buildingOwnerCode;
+  const prev = state.brush.buildingOwnerFactionId;
   buildingFactionSelectEl.innerHTML = '';
   const blank = document.createElement('option');
   blank.value = '';
   blank.textContent = '— No faction —';
   buildingFactionSelectEl.appendChild(blank);
   let found = false;
-  for (const name of sortedFactionNames()){
-    const rec = state.factions.get(name);
-    const code = formatFactionCode(rec.code);
+  for (const rec of sortedFactions()){
     const opt = document.createElement('option');
-    opt.value = code;
-    opt.textContent = `${name} (${code})`;
+    opt.value = rec.id;
+    opt.textContent = `${rec.name} (${formatFactionCode(rec.code)})`;
     buildingFactionSelectEl.appendChild(opt);
-    if (code === prev) found = true;
+    if (rec.id === prev) found = true;
   }
-  state.brush.buildingOwnerCode = found ? prev : '';
-  buildingFactionSelectEl.value = state.brush.buildingOwnerCode;
+  state.brush.buildingOwnerFactionId = found ? prev : '';
+  buildingFactionSelectEl.value = state.brush.buildingOwnerFactionId;
 }
 
 export function refreshBuildingUi(){
@@ -1958,7 +1936,7 @@ if (buildingNameInputEl){
 
 if (buildingFactionSelectEl){
   buildingFactionSelectEl.addEventListener('change', () => {
-    state.brush.buildingOwnerCode = buildingFactionSelectEl.value;
+    state.brush.buildingOwnerFactionId = buildingFactionSelectEl.value;
   });
 }
 
@@ -1991,29 +1969,23 @@ const unitNotesInputEl = document.getElementById('unitNotesInput');
 
 function syncUnitBrushInputs(){
   if (!unitFactionSelectEl) return;
-  const prev = state.brush.unitOwnerCode;
+  const prev = state.brush.unitOwnerFactionId;
   unitFactionSelectEl.innerHTML = '';
   const blank = document.createElement('option');
   blank.value = '';
   blank.textContent = '— No faction —';
   unitFactionSelectEl.appendChild(blank);
   let found = false;
-  let selectedName = '';
-  for (const name of sortedFactionNames()){
-    const rec = state.factions.get(name);
-    const code = formatFactionCode(rec.code);
+  for (const rec of sortedFactions()){
     const opt = document.createElement('option');
-    opt.value = code;
-    opt.textContent = `${name} (${code})`;
+    opt.value = rec.id;
+    opt.textContent = `${rec.name} (${formatFactionCode(rec.code)})`;
     unitFactionSelectEl.appendChild(opt);
-    if (code === prev){
-      found = true;
-      selectedName = name;
-    }
+    if (rec.id === prev) found = true;
   }
-  state.brush.unitOwnerCode = found ? prev : '';
-  unitFactionSelectEl.value = state.brush.unitOwnerCode;
-  setBrushSwatch(unitFactionSwatchEl, selectedName, false);
+  state.brush.unitOwnerFactionId = found ? prev : '';
+  unitFactionSelectEl.value = state.brush.unitOwnerFactionId;
+  setBrushSwatch(unitFactionSwatchEl, state.brush.unitOwnerFactionId, false);
   if (unitNameInputEl && document.activeElement !== unitNameInputEl){
     unitNameInputEl.value = state.brush.unitName;
   }
@@ -2027,7 +1999,7 @@ function syncUnitBrushInputs(){
 
 if (unitFactionSelectEl){
   unitFactionSelectEl.addEventListener('change', () => {
-    state.brush.unitOwnerCode = unitFactionSelectEl.value;
+    state.brush.unitOwnerFactionId = unitFactionSelectEl.value;
     syncUnitBrushInputs();
   });
 }
@@ -2084,7 +2056,7 @@ function updateSelectedHexInfo(){
   const capitalOf = factionsWithCapitalAt(state.selectedHex);
   const capitalLine = capitalOf.length
     ? `<div><b>Capital of</b> ${capitalOf.join(', ')}</div>`
-    : (state.selectedHex.owner ? '<div>Not a capital.</div>' : '<div>Paint a faction before setting a capital.</div>');
+    : (state.selectedHex.ownerFactionId ? '<div>Not a capital.</div>' : '<div>Paint a faction before setting a capital.</div>');
   const onRoutes = routesOnHex(state.selectedHex).map(r => r.name);
   const routesLine = onRoutes.length ? `<div><b>Routes</b> ${onRoutes.join(', ')}</div>` : '';
   const regionRec = hexRegion(state.selectedHex);
@@ -2095,12 +2067,12 @@ function updateSelectedHexInfo(){
     <div><b>Terrain</b> ${terrainLabel}</div>
     <div><b>Elevation</b> ${ELEVATION_LABELS[state.selectedHex.elevation] || state.selectedHex.elevation || 'Flat'}</div>
     <div><b>Population</b> ${state.selectedHex.population}</div>
-    <div><b>Faction</b> ${state.selectedHex.owner || '—'}</div>
+    <div><b>Faction</b> ${factionName(state.selectedHex.ownerFactionId) || '—'}</div>
     ${regionLine}
-    ${state.selectedHex.controller && state.selectedHex.controller !== state.selectedHex.owner
-      ? `<div><b>De facto</b> ${state.selectedHex.controller}</div>`
+    ${state.selectedHex.controllerFactionId && state.selectedHex.controllerFactionId !== state.selectedHex.ownerFactionId
+      ? `<div><b>De facto</b> ${factionName(state.selectedHex.controllerFactionId) || '—'}</div>`
       : ''}
-    <div><b>Loyalty</b> ${state.selectedHex.loyalty || '—'}</div>
+    <div><b>Loyalty</b> ${factionName(state.selectedHex.loyaltyFactionId) || '—'}</div>
     <div><b>Culture</b> ${state.selectedHex.culture || '—'}</div>
     <div><b>City</b> ${state.selectedHex.cityName || '—'}</div>
     ${routesLine}
@@ -2138,8 +2110,8 @@ function renderHexBuildingsList(){
 
     const swatch = document.createElement('span');
     swatch.className = 'building-faction-swatch';
-    swatch.style.background = buildingOwnerColor(b.ownerFactionCode);
-    swatch.title = b.ownerFactionCode || 'No faction';
+    swatch.style.background = buildingOwnerColor(b.ownerFactionId);
+    swatch.title = factionName(b.ownerFactionId) || 'No faction';
 
     const nameEl = document.createElement('span');
     nameEl.className = 'building-name';
@@ -2205,8 +2177,8 @@ function renderHexUnitsList(){
 
     const swatch = document.createElement('span');
     swatch.className = 'building-faction-swatch';
-    swatch.style.background = buildingOwnerColor(u.ownerFactionCode);
-    swatch.title = u.ownerFactionCode || 'No faction';
+    swatch.style.background = buildingOwnerColor(u.ownerFactionId);
+    swatch.title = factionName(u.ownerFactionId) || 'No faction';
 
     const nameEl = document.createElement('span');
     nameEl.className = 'building-name';
@@ -2377,16 +2349,16 @@ export function refreshSelectedHexPanel(){
   locked.hidden = hasHex;
   editor.hidden = !hasHex;
   document.getElementById('clearSelectionBtn').disabled = !hasHex;
-  document.getElementById('setCapitalBtn').disabled = !hasHex || !state.factions.has(state.selectedHex.owner);
-  document.getElementById('clearCapitalBtn').disabled = !hasHex || !state.factions.has(state.selectedHex.owner) || getFactionCapitalHex(state.selectedHex.owner) !== state.selectedHex;
+  document.getElementById('setCapitalBtn').disabled = !hasHex || !getFaction(state.selectedHex.ownerFactionId);
+  document.getElementById('clearCapitalBtn').disabled = !hasHex || !getFaction(state.selectedHex.ownerFactionId) || getFactionCapitalHex(state.selectedHex.ownerFactionId) !== state.selectedHex;
   if (hasHex) renderCustomDataRows();
   else document.getElementById('customDataRows').innerHTML = '';
 }
 
 document.getElementById('setCapitalBtn').addEventListener('click', () => {
-  if (!state.selectedHex || !state.factions.has(state.selectedHex.owner)) return;
+  if (!state.selectedHex || !getFaction(state.selectedHex.ownerFactionId)) return;
   beginAction();
-  setFactionCapital(state.selectedHex.owner, state.selectedHex);
+  setFactionCapital(state.selectedHex.ownerFactionId, state.selectedHex);
   commitAction();
   refreshFactionList();
   refreshSelectedHexPanel();
@@ -2395,9 +2367,9 @@ document.getElementById('setCapitalBtn').addEventListener('click', () => {
 });
 
 document.getElementById('clearCapitalBtn').addEventListener('click', () => {
-  if (!state.selectedHex || !state.factions.has(state.selectedHex.owner)) return;
+  if (!state.selectedHex || !getFaction(state.selectedHex.ownerFactionId)) return;
   beginAction();
-  setFactionCapital(state.selectedHex.owner, null);
+  setFactionCapital(state.selectedHex.ownerFactionId, null);
   commitAction();
   refreshFactionList();
   refreshSelectedHexPanel();
@@ -2480,11 +2452,11 @@ document.getElementById('cleanOceanBtn').addEventListener('click', () => {
   beginAction();
   for (const hex of state.hexes.values()){
     if (hex.terrain !== 'ocean') continue;
-    if (!hex.population && !hex.loyalty && !hex.controller && !hex.culture) continue;
+    if (!hex.population && !hex.loyaltyFactionId && !hex.controllerFactionId && !hex.culture) continue;
     markHexForUndo(hex);
     hex.population = 0;
-    hex.loyalty = null;
-    hex.controller = null;
+    hex.loyaltyFactionId = null;
+    hex.controllerFactionId = null;
     hex.culture = null;
   }
   commitAction();
@@ -2556,10 +2528,10 @@ document.getElementById('bgClearBtn').addEventListener('click', () => {
    ---------------------------------------------------------------------------- */
 /* Accepts both the current faction record and the old `owners` map, whose
    entries were either a bare color string or `{ color, capital }`. */
-function parseFactionEntry(name, raw){
-  if (typeof raw === 'string') return makeFaction(name, { color: raw });
-  if (raw && typeof raw === 'object') return makeFaction(name, raw);
-  return makeFaction(name);
+function parseFactionEntry(raw){
+  if (typeof raw === 'string') return makeFaction({ name: 'New Faction', color: raw });
+  if (raw && typeof raw === 'object') return makeFaction(raw);
+  return makeFaction({});
 }
 
 function exportCultures(){
@@ -2576,25 +2548,32 @@ function exportCultures(){
 function exportFactions(){
   syncFactionCapitals();
   ensureFactionCodes();
-  return sortedFactionNames().map(name => {
-    const rec = state.factions.get(name);
-    return { ...factionFileEntry(name, rec), hexCount: factionHexCount(name) };
-  });
+  const seen = new Set();
+  return sortedFactions().map(rec => {
+    if (seen.has(rec.id)) return null;
+    seen.add(rec.id);
+    return { ...factionFileEntry(rec), hexCount: factionHexCount(rec.id) };
+  }).filter(Boolean);
 }
 
-/* Kept alongside `factions` so consumers written against the old export keep
-   reading colors and capitals without changes. */
-function exportOwners(){
-  const out = {};
-  for (const [name, rec] of state.factions){
-    out[name] = { color: rec.color, capital: cloneCapital(rec.capital) };
-  }
-  return out;
+function refreshAllEditorUi(){
+  refreshBuildingUi();
+  refreshPathUi();
+  refreshRouteList();
+  refreshFactionList();
+  refreshLoyaltyList();
+  refreshControllerList();
+  refreshCultureList();
+  refreshRegionList();
+  refreshSelectedHexPanel();
+  refreshInteractionUI();
+  syncFactionBrushInputs();
+  syncCultureColorInput();
 }
 
 function exportMap(){
   const exportHexes = Array.from(state.hexes.values()).map(h => {
-    const cloned = { ...h, buildings: h.buildings || [], units: h.units || [] };
+    const cloned = cloneHex(h);
     delete cloned.x;
     delete cloned.y;
     delete cloned.isCapital;
@@ -2603,18 +2582,13 @@ function exportMap(){
   });
 
   const data = {
-    meta: { version: 9, cols: state.mapCols, rows: state.mapRows, hexSize: HEX_SIZE, exportedAt: new Date().toISOString() },
+    meta: { version: MAP_META_VERSION, appVersion: APP_VERSION, cols: state.mapCols, rows: state.mapRows, hexSize: HEX_SIZE, exportedAt: new Date().toISOString() },
     buildingTypes: state.buildingTypes.map(t => ({ building_id: t.building_id, name: t.name, icon: t.icon })),
+    nextBuildingSeq: state.nextBuildingSeq,
+    nextRouteId: state.nextRouteId,
     factions: exportFactions(),
-    owners: exportOwners(),
     cultures: exportCultures(),
-    regions: Array.from(state.regions.values()).map(r => ({
-      id: r.id,
-      name: r.name,
-      type: r.type,
-      governor: r.governor,
-      faction: r.faction
-    })),
+    regions: snapshotRegions(),
     routes: state.routes.map(r => {
       const def = ROUTE_BY_ID[r.style];
       return {
@@ -2656,15 +2630,13 @@ function importMap(file){
       restoreRegions({ nextId: 1, list: [] });
       state.pathDraft = null;
 
-      // Factions must exist before hexes reference them by name.
+      // Factions must exist before hexes and regions reference them by id.
       if (Array.isArray(data.factions)){
         data.factions.forEach(raw => {
-          const name = raw && typeof raw.name === 'string' ? raw.name.trim() : '';
-          if (name) state.factions.set(name, parseFactionEntry(name, raw));
-        });
-      } else if (data.owners){
-        Object.entries(data.owners).forEach(([name, raw]) => {
-          if (name) state.factions.set(name, parseFactionEntry(name, raw));
+          const rec = parseFactionEntry(raw);
+          if (!rec || !rec.id || state.factions.has(rec.id)) return;
+          if (!isFactionNameFree(rec.name, rec.id)) rec.name = uniqueFactionName(rec.name, rec.id);
+          state.factions.set(rec.id, rec);
         });
       }
 
@@ -2673,13 +2645,13 @@ function importMap(file){
       data.hexes.forEach(h => {
         if (typeof h.q !== 'number' || typeof h.r !== 'number') return;
         const coords = axialToPixel(h.q, h.r, HEX_SIZE);
-        const owner = h.owner || null;
-        const loyalty = h.loyalty || null;
-        const controller = h.controller || null;
+        const ownerFactionId = getFaction(h.ownerFactionId) ? h.ownerFactionId : null;
+        const loyaltyFactionId = getFaction(h.loyaltyFactionId) ? h.loyaltyFactionId : null;
+        const controllerFactionId = getFaction(h.controllerFactionId) ? h.controllerFactionId : null;
         const culture = h.culture || null;
         const regionId = Number(h.region);
         const regionRec = Number.isFinite(regionId) ? getRegion(regionId) : null;
-        const region = (regionRec && owner === regionRec.faction) ? regionRec.id : null;
+        const region = (regionRec && ownerFactionId && ownerFactionId === regionRec.factionId) ? regionRec.id : null;
         const legacyTerrain = LEGACY_TERRAIN_IDS[h.terrain] || h.terrain;
         const terrain = state.TERRAIN_COLORS[legacyTerrain] ? legacyTerrain : 'ocean';
         const elevation = (h.elevation === 'hills' || h.elevation === 'mountains') ? h.elevation : 'flat';
@@ -2691,9 +2663,9 @@ function importMap(file){
           terrain,
           elevation,
           population: Number(h.population) || 0,
-          owner,
-          loyalty,
-          controller,
+          ownerFactionId,
+          loyaltyFactionId,
+          controllerFactionId,
           region,
           culture,
           cityName: h.cityName || null,
@@ -2701,9 +2673,6 @@ function importMap(file){
           buildings: parseBuildings(h.buildings),
           units: parseUnits(h.units)
         });
-        if (owner) ensureFaction(owner);
-        if (loyalty) ensureFaction(loyalty, { type: 'nonstate' });
-        if (controller) ensureFaction(controller, { type: 'nonstate' });
         if (culture) ensureCulture(culture);
       });
 
@@ -2721,9 +2690,8 @@ function importMap(file){
       pruneUnusedCultures();
       restoreRoutes(Array.isArray(data.routes) ? data.routes : []);
       state.buildingTypes = parseBuildingTypes(data.buildingTypes);
-      refreshBuildingUi();
-      refreshPathUi();
-      refreshRouteList();
+      if (Number.isFinite(data.nextBuildingSeq)) state.nextBuildingSeq = data.nextBuildingSeq;
+      if (Number.isFinite(data.nextRouteId)) state.nextRouteId = Math.max(state.nextRouteId, data.nextRouteId);
       invalidatePopulationStats();
 
       if (data.meta){
@@ -2736,13 +2704,8 @@ function importMap(file){
       state.selectedHex = null;
       state.hoveredHex = null;
       centerCamera();
+      refreshAllEditorUi();
       render();
-      refreshFactionList();
-      refreshLoyaltyList();
-      refreshControllerList();
-      refreshCultureList();
-      refreshRegionList();
-      refreshSelectedHexPanel();
     } catch (err){
       alert('Failed to import map: ' + err.message);
     }

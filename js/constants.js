@@ -18,6 +18,7 @@ export const DEFAULT_TERRAIN_DEFS = [
 ];
 export const LEGACY_TERRAIN_IDS = { plains: 'grassland', river: 'grassland' };
 export const APP_VERSION = '0.9.0';
+export const MAP_META_VERSION = 10;
 
 export const ELEVATION_DEFS = [
   { id:'flat',      label:'Flat' },
