@@ -1,6 +1,6 @@
 import {
   DEFAULT_MAX_UNDO, DEFAULT_MAP_COLS, DEFAULT_MAP_ROWS, DEFAULT_TILE_OPACITY,
-  DEFAULT_TERRAIN_DEFS, DEFAULT_AUTOSAVE_MS
+  DEFAULT_TERRAIN_DEFS, DEFAULT_AUTOSAVE_MS, DEFAULT_BUILDING_TYPES
 } from './constants.js';
 
 export const state = {
@@ -11,7 +11,7 @@ export const state = {
   mapRows: DEFAULT_MAP_ROWS,
   hexes: new Map(),
   camera: { x: 0, y: 0, zoom: 1 },
-  viewLayers: { terrain: true, elevation: true, ownership: true, regions: true, loyalty: false, controller: false, culture: false, population: false, routes: true },
+  viewLayers: { terrain: true, elevation: true, ownership: true, regions: true, loyalty: false, controller: false, culture: false, population: false, routes: true, buildings: true, units: true },
   showFullGrid: false,
   tileOpacity: DEFAULT_TILE_OPACITY,
   prefConfirmDeletes: true,
@@ -36,8 +36,17 @@ export const state = {
     culture: '',
     size: 1,
     routeStyle: 'river1',
-    pathMode: 'draw'
+    pathMode: 'draw',
+    buildingTypeId: 'outpost',
+    buildingOwnerCode: '',
+    buildingName: '',
+    unitOwnerCode: '',
+    unitName: '',
+    unitPersonnel: 1000,
+    unitNotes: ''
   },
+  buildingTypes: DEFAULT_BUILDING_TYPES.map(t => ({ ...t })),
+  nextBuildingSeq: 0,
   routes: [],
   nextRouteId: 1,
   pathDraft: null,
@@ -98,7 +107,8 @@ export const hooks = {
   updateToolVisibility() {},
   setActiveTool() {},
   closeFactionEditor() {},
-  openModal() {}
+  openModal() {},
+  refreshBuildingUi() {}
 };
 
 export function bindHooks(next) {

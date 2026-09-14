@@ -27,7 +27,10 @@ import {
   routesOnHex, routeCells,
   getSelectedRoute, cancelPathDraft, selectRoute, deleteRouteById, renameRoute,
   applyBrush, paintAtScreen, getHexAtScreen, applyZoom, handlePathClick,
-  finishRouteDrag
+  finishRouteDrag, parseBuildingTypes, parseBuildings, parseUnits, upsertBuildingType,
+  getBuildingType, renameBuildingOnHex, deleteBuildingOnHex, toggleBuildingOperational,
+  formatBuildingHoverLine, formatUnitHoverLine, buildingOwnerColor,
+  stampUnitOnHex, renameUnitOnHex, deleteUnitOnHex
 } from './domain.js';
 
 function getMousePos(e){
@@ -39,6 +42,10 @@ canvas.addEventListener('contextmenu', e => e.preventDefault());
 
 canvas.addEventListener('mousedown', e => {
   const pos = getMousePos(e);
+
+  if (e.button === 0 && !state.isPainting && !state.routeDrag && !state.isDraggingBg){
+    closeTopDrawer();
+  }
 
   if (state.capitalPickMode){
     if (e.button === 0){
@@ -133,6 +140,7 @@ window.addEventListener('mousemove', e => {
     }
   } else if (!state.isPanning && state.hoveredHex){
     state.hoveredHex = null;
+    updateInspector(null);
     render();
   }
   
@@ -197,7 +205,7 @@ window.addEventListener('keydown', e => {
   } else if ((e.ctrlKey || e.metaKey) && (key === 'y' || (e.shiftKey && key === 'z'))){
     e.preventDefault();
     redo();
-  } else if (key === 'escape'){
+    } else if (key === 'escape'){
     if (state.pathDraft || state.routeDrag){
       e.preventDefault();
       cancelPathDraft();
@@ -206,6 +214,8 @@ window.addEventListener('keydown', e => {
       e.preventDefault();
       selectRoute(null);
       render();
+    } else if (closeTopDrawer()){
+      e.preventDefault();
     }
   } else if ((key === 'delete' || key === 'backspace') && getToolDef().kind === 'path' && !state.pathDraft && !state.routeDrag){
     const selected = getSelectedRoute();
@@ -300,17 +310,24 @@ export function setActiveTool(id){
   updateToolVisibility();
   refreshInteractionUI();
   render();
+  updateInspector(state.hoveredHex);
+}
+
+function updateSelectedToolTabLabel(){
+  const el = document.getElementById('selectedToolCurrent');
+  if (el) el.textContent = getToolDef().label || 'Tool';
 }
 
 export function updateToolVisibility(){
   const tool = getToolDef();
   document.querySelectorAll('[data-tool]').forEach(el => {
     const ids = el.dataset.tool.split(/[\s,]+/).filter(Boolean);
-    el.style.display = ids.includes(tool.id) ? '' : 'none';
+    el.style.display = ids.includes(tool.id) ? 'block' : 'none';
   });
   document.querySelectorAll('[data-tool-kind]').forEach(el => {
-    el.style.display = (el.dataset.toolKind === tool.kind) ? '' : 'none';
+    el.style.display = (el.dataset.toolKind === tool.kind) ? 'block' : 'none';
   });
+  updateSelectedToolTabLabel();
 }
 
 const terrainSwatchesEl = document.getElementById('terrainSwatches');
@@ -393,6 +410,8 @@ document.getElementById('layerLoyalty').addEventListener('change', e => { state.
 document.getElementById('layerController').addEventListener('change', e => { state.viewLayers.controller = e.target.checked; render(); });
 document.getElementById('layerCulture').addEventListener('change', e => { state.viewLayers.culture = e.target.checked; render(); });
 document.getElementById('layerRoutes').addEventListener('change', e => { state.viewLayers.routes = e.target.checked; render(); });
+document.getElementById('layerBuildings').addEventListener('change', e => { state.viewLayers.buildings = e.target.checked; render(); });
+document.getElementById('layerUnits').addEventListener('change', e => { state.viewLayers.units = e.target.checked; render(); });
 document.getElementById('layerPopulation').addEventListener('change', e => { state.viewLayers.population = e.target.checked; render(); });
 document.getElementById('showFullGrid').addEventListener('change', e => { state.showFullGrid = e.target.checked; render(); });
 document.querySelectorAll('input[name=heatmapScale]').forEach(r => {
@@ -408,8 +427,87 @@ document.querySelectorAll('.float-tab-toggle').forEach(btn => {
     const tab = btn.closest('.float-tab');
     const minimized = tab.classList.toggle('minimized');
     btn.setAttribute('aria-expanded', minimized ? 'false' : 'true');
+    const minBtn = btn.querySelector('.float-tab-min-btn');
+    if (minBtn){
+      minBtn.textContent = minimized ? '+' : '−';
+      minBtn.title = minimized ? 'Expand' : 'Minimize';
+    }
+    btn.title = minimized ? `Expand ${btn.querySelector('.float-tab-title')?.textContent || 'panel'}` : `Minimize ${btn.querySelector('.float-tab-title')?.textContent || 'panel'}`;
   });
 });
+
+let activeTopDrawer = null;
+
+export function closeTopDrawer(){
+  if (!activeTopDrawer) return false;
+  activeTopDrawer = null;
+  const drawer = document.getElementById('topDrawer');
+  if (drawer) drawer.hidden = true;
+  document.querySelectorAll('.topbar-tab[data-drawer]').forEach(btn => {
+    btn.classList.remove('active');
+    btn.setAttribute('aria-expanded', 'false');
+  });
+  document.querySelectorAll('.drawer-panel').forEach(panel => { panel.hidden = true; });
+  return true;
+}
+
+function setTopDrawer(id){
+  if (activeTopDrawer === id){
+    closeTopDrawer();
+    return;
+  }
+  const drawer = document.getElementById('topDrawer');
+  const panel = document.getElementById('drawer-' + id);
+  if (!drawer || !panel) return;
+  activeTopDrawer = id;
+  drawer.hidden = false;
+  document.querySelectorAll('.drawer-panel').forEach(p => { p.hidden = p !== panel; });
+  document.querySelectorAll('.topbar-tab[data-drawer]').forEach(btn => {
+    const on = btn.dataset.drawer === id;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+  });
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+document.querySelectorAll('.topbar-tab[data-drawer]').forEach(btn => {
+  btn.addEventListener('click', () => setTopDrawer(btn.dataset.drawer));
+});
+
+(function initDockSplit(){
+  const split = document.getElementById('dockSplit');
+  const sidebar = document.getElementById('sidebar');
+  const topPane = document.getElementById('toolOptionsPane');
+  const bottomPane = document.getElementById('selectedHexPane');
+  if (!split || !sidebar || !topPane || !bottomPane) return;
+  let dragging = false;
+  split.addEventListener('mousedown', e => {
+    e.preventDefault();
+    dragging = true;
+    split.classList.add('is-dragging');
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const rect = sidebar.getBoundingClientRect();
+    const handle = split.getBoundingClientRect().height;
+    const minTop = 100;
+    const minBottom = 120;
+    const maxTop = rect.height - handle - minBottom;
+    const topH = Math.max(minTop, Math.min(maxTop, e.clientY - rect.top - handle / 2));
+    topPane.style.flex = 'none';
+    topPane.style.height = topH + 'px';
+    bottomPane.style.flex = '1 1 auto';
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    split.classList.remove('is-dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+})();
 
 const toolRadiosEl = document.getElementById('toolRadios');
 TOOL_DEFS.forEach(tool => {
@@ -419,9 +517,10 @@ TOOL_DEFS.forEach(tool => {
   radio.name = 'tool';
   radio.value = tool.id;
   if (tool.id === state.activeTool) radio.checked = true;
-  const shortcut = tool.shortcut ? ` (${tool.shortcut})` : '';
+  const num = tool.number != null ? tool.number : tool.shortcut;
+  const suffix = num != null && num !== '' ? ` (${num})` : '';
   lab.appendChild(radio);
-  lab.appendChild(document.createTextNode(` ${tool.label}${shortcut}`));
+  lab.appendChild(document.createTextNode(` ${tool.label}${suffix}`));
   toolRadiosEl.appendChild(lab);
 });
 
@@ -520,6 +619,7 @@ export function syncFactionBrushInputs(){
   editOwnerFactionBtn.disabled = !state.brush.owner;
   editLoyaltyFactionBtn.disabled = !state.brush.loyalty;
   editControllerFactionBtn.disabled = !state.brush.controller;
+  syncUnitBrushInputs();
 }
 
 ownerSelectEl.addEventListener('change', () => {
@@ -543,6 +643,7 @@ const regionNameInputEl = document.getElementById('regionNameInput');
 const regionTypeInputEl = document.getElementById('regionTypeInput');
 const regionGovernorInputEl = document.getElementById('regionGovernorInput');
 const newRegionBtn = document.getElementById('newRegionBtn');
+const editRegionBtn = document.getElementById('editRegionBtn');
 const deleteRegionBtn = document.getElementById('deleteRegionBtn');
 let regionFieldsLocked = false;
 let regionSelectSilent = false;
@@ -627,7 +728,10 @@ export function syncRegionBrushInputs(){
   }
   regionFieldsLocked = false;
   if (newRegionBtn) newRegionBtn.disabled = !faction;
+  if (editRegionBtn) editRegionBtn.disabled = !rec;
   if (deleteRegionBtn) deleteRegionBtn.disabled = !rec;
+  const regionEditor = document.getElementById('regionEditor');
+  if (regionEditor) regionEditor.hidden = !rec;
 }
 
 regionFactionSelectEl.addEventListener('change', () => {
@@ -694,8 +798,16 @@ newRegionBtn.addEventListener('click', () => {
   if (rec) state.brush.regionId = rec.id;
   setActiveTool('region');
   refreshRegionList();
+  revealRegionManagement();
   render();
 });
+
+if (editRegionBtn){
+  editRegionBtn.addEventListener('click', () => {
+    if (!getRegion(state.brush.regionId)) return;
+    revealRegionManagement();
+  });
+}
 
 deleteRegionBtn.addEventListener('click', () => {
   const rec = getRegion(state.brush.regionId);
@@ -742,13 +854,42 @@ function factionBadge(name){
   return el;
 }
 
+function setDrawerCount(id, n){
+  const el = document.getElementById(id);
+  if (el) el.textContent = String(n);
+}
+
+function updateFactionsDrawerCounts(){
+  let loyalty = 0, controller = 0, culture = 0;
+  const seenL = new Set(), seenC = new Set(), seenU = new Set();
+  for (const hex of state.hexes.values()){
+    if (hex.loyalty && !seenL.has(hex.loyalty)){ seenL.add(hex.loyalty); loyalty++; }
+    if (hex.controller && !seenC.has(hex.controller)){ seenC.add(hex.controller); controller++; }
+    if (hex.culture && !seenU.has(hex.culture)){ seenU.add(hex.culture); culture++; }
+  }
+  setDrawerCount('factionDrawerCount', state.factions.size);
+  setDrawerCount('regionDrawerCount', state.regions.size);
+  setDrawerCount('cultureDrawerCount', culture);
+  setDrawerCount('loyaltyDrawerCount', loyalty);
+  setDrawerCount('controllerDrawerCount', controller);
+}
+
+function revealRegionManagement(){
+  if (activeTopDrawer !== 'factions') setTopDrawer('factions');
+  const group = document.getElementById('regionsDrawerGroup');
+  if (group) group.open = true;
+}
+
 export function refreshFactionList(){
+  updateFactionsDrawerCounts();
   const listEl = document.getElementById('factionList');
   listEl.innerHTML = '';
   if (state.factions.size === 0){
     listEl.innerHTML = '<div class="hint">No factions yet. Create one to start painting territory.</div>';
     syncFactionBrushInputs();
     syncRegionBrushInputs();
+    syncBuildingBrushInputs();
+    updateFactionsDrawerCounts();
     return;
   }
 
@@ -809,6 +950,8 @@ export function refreshFactionList(){
   }
   syncFactionBrushInputs();
   if (shouldSyncRegionForm()) syncRegionBrushInputs();
+  syncBuildingBrushInputs();
+  updateFactionsDrawerCounts();
 }
 
 export function refreshRegionList(){
@@ -818,6 +961,7 @@ export function refreshRegionList(){
   if (state.regions.size === 0){
     listEl.innerHTML = '<div class="hint">No regions yet. Create one to start painting provinces.</div>';
     if (shouldSyncRegionForm()) syncRegionBrushInputs();
+    updateFactionsDrawerCounts();
     return;
   }
   const counts = getRegionCounts();
@@ -854,6 +998,19 @@ export function refreshRegionList(){
     const actionsEl = document.createElement('div');
     actionsEl.className = 'country-actions';
 
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn-icon-sm';
+    editBtn.innerHTML = '✎';
+    editBtn.title = 'Edit region';
+    editBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      state.brush.regionId = rec.id;
+      syncRegionBrushInputs();
+      setActiveTool('region');
+      revealRegionManagement();
+      refreshRegionList();
+    });
+
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn-icon-sm danger';
     deleteBtn.innerHTML = '×';
@@ -869,6 +1026,7 @@ export function refreshRegionList(){
       render();
     });
 
+    actionsEl.appendChild(editBtn);
     actionsEl.appendChild(deleteBtn);
     row.appendChild(swatch);
     row.appendChild(nameEl);
@@ -877,6 +1035,7 @@ export function refreshRegionList(){
     listEl.appendChild(row);
   }
   if (shouldSyncRegionForm()) syncRegionBrushInputs();
+  updateFactionsDrawerCounts();
 }
 
 export function refreshLoyaltyList(){
@@ -888,6 +1047,7 @@ export function refreshLoyaltyList(){
   listEl.innerHTML = '';
   if (counts.size === 0){
     listEl.innerHTML = '<div class="hint">No loyalties painted yet.</div>';
+    updateFactionsDrawerCounts();
     return;
   }
   const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
@@ -950,6 +1110,7 @@ export function refreshLoyaltyList(){
     row.appendChild(actionsEl);
     listEl.appendChild(row);
   }
+  updateFactionsDrawerCounts();
 }
 
 export function refreshControllerList(){
@@ -961,6 +1122,7 @@ export function refreshControllerList(){
   listEl.innerHTML = '';
   if (counts.size === 0){
     listEl.innerHTML = '<div class="hint">No de facto control painted yet.</div>';
+    updateFactionsDrawerCounts();
     return;
   }
   const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
@@ -1023,6 +1185,7 @@ export function refreshControllerList(){
     row.appendChild(actionsEl);
     listEl.appendChild(row);
   }
+  updateFactionsDrawerCounts();
 }
 
 export function refreshCultureList(){
@@ -1034,6 +1197,7 @@ export function refreshCultureList(){
   listEl.innerHTML = '';
   if (counts.size === 0){
     listEl.innerHTML = '<div class="hint">No cultures painted yet.</div>';
+    updateFactionsDrawerCounts();
     return;
   }
   const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
@@ -1101,6 +1265,7 @@ export function refreshCultureList(){
     row.appendChild(actionsEl);
     listEl.appendChild(row);
   }
+  updateFactionsDrawerCounts();
 }
 
 export function refreshRouteList(){
@@ -1639,6 +1804,7 @@ factionImportFileEl.addEventListener('change', e => {
 document.getElementById('factionSaveBtn').addEventListener('click', commitFactionEditor);
 document.getElementById('factionCancelBtn').addEventListener('click', closeFactionEditor);
 document.getElementById('newFactionBtn').addEventListener('click', () => openFactionEditor(null));
+document.getElementById('newOwnerFactionBtn').addEventListener('click', () => openFactionEditor(null));
 editOwnerFactionBtn.addEventListener('click', () => {
   if (state.brush.owner) openFactionEditor(state.brush.owner);
 });
@@ -1709,6 +1875,184 @@ brushSizeSlider.addEventListener('input', e => {
 
 const cityNameInputEl = document.getElementById('cityNameInput');
 
+const buildingTypeSelectEl = document.getElementById('buildingTypeSelect');
+const buildingNameInputEl = document.getElementById('buildingNameInput');
+const buildingFactionSelectEl = document.getElementById('buildingFactionSelect');
+const buildingTypeIdInputEl = document.getElementById('buildingTypeIdInput');
+const buildingTypeNameInputEl = document.getElementById('buildingTypeNameInput');
+
+function syncBuildingTypeSelect(){
+  if (!buildingTypeSelectEl) return;
+  const prev = state.brush.buildingTypeId;
+  buildingTypeSelectEl.innerHTML = '';
+  if (state.buildingTypes.length === 0){
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '— No types —';
+    buildingTypeSelectEl.appendChild(opt);
+    state.brush.buildingTypeId = '';
+    return;
+  }
+  if (!state.buildingTypes.some(t => t.building_id === prev)){
+    state.brush.buildingTypeId = state.buildingTypes[0].building_id;
+  }
+  for (const t of state.buildingTypes){
+    const opt = document.createElement('option');
+    opt.value = t.building_id;
+    opt.textContent = `${t.name} (${t.building_id})`;
+    buildingTypeSelectEl.appendChild(opt);
+  }
+  buildingTypeSelectEl.value = state.brush.buildingTypeId;
+  const current = getBuildingType(state.brush.buildingTypeId);
+  if (buildingTypeIdInputEl && current && document.activeElement !== buildingTypeIdInputEl){
+    buildingTypeIdInputEl.value = current.building_id;
+  }
+  if (buildingTypeNameInputEl && current && document.activeElement !== buildingTypeNameInputEl){
+    buildingTypeNameInputEl.value = current.name;
+  }
+}
+
+function syncBuildingBrushInputs(){
+  if (!buildingFactionSelectEl) return;
+  const prev = state.brush.buildingOwnerCode;
+  buildingFactionSelectEl.innerHTML = '';
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = '— No faction —';
+  buildingFactionSelectEl.appendChild(blank);
+  let found = false;
+  for (const name of sortedFactionNames()){
+    const rec = state.factions.get(name);
+    const code = formatFactionCode(rec.code);
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = `${name} (${code})`;
+    buildingFactionSelectEl.appendChild(opt);
+    if (code === prev) found = true;
+  }
+  state.brush.buildingOwnerCode = found ? prev : '';
+  buildingFactionSelectEl.value = state.brush.buildingOwnerCode;
+}
+
+export function refreshBuildingUi(){
+  syncBuildingTypeSelect();
+  syncBuildingBrushInputs();
+  if (buildingNameInputEl) buildingNameInputEl.value = state.brush.buildingName;
+  syncUnitBrushInputs();
+}
+
+if (buildingTypeSelectEl){
+  buildingTypeSelectEl.addEventListener('change', () => {
+    state.brush.buildingTypeId = buildingTypeSelectEl.value;
+    const current = getBuildingType(state.brush.buildingTypeId);
+    if (buildingTypeIdInputEl) buildingTypeIdInputEl.value = current ? current.building_id : '';
+    if (buildingTypeNameInputEl) buildingTypeNameInputEl.value = current ? current.name : '';
+  });
+}
+
+if (buildingNameInputEl){
+  buildingNameInputEl.addEventListener('input', () => {
+    state.brush.buildingName = buildingNameInputEl.value;
+  });
+}
+
+if (buildingFactionSelectEl){
+  buildingFactionSelectEl.addEventListener('change', () => {
+    state.brush.buildingOwnerCode = buildingFactionSelectEl.value;
+  });
+}
+
+document.getElementById('saveBuildingTypeBtn').addEventListener('click', () => {
+  const rec = upsertBuildingType(
+    buildingTypeIdInputEl ? buildingTypeIdInputEl.value : '',
+    buildingTypeNameInputEl ? buildingTypeNameInputEl.value : ''
+  );
+  if (!rec){
+    alert('Enter a type id and a display name.');
+    return;
+  }
+  state.brush.buildingTypeId = rec.building_id;
+  refreshBuildingUi();
+  lucide.createIcons();
+});
+
+document.getElementById('manageBuildingTypesBtn').addEventListener('click', () => {
+  refreshBuildingUi();
+  openModal('buildingTypesModal');
+  lucide.createIcons();
+});
+document.getElementById('buildingTypesCloseBtn').addEventListener('click', () => closeModal('buildingTypesModal'));
+
+const unitFactionSelectEl = document.getElementById('unitFactionSelect');
+const unitFactionSwatchEl = document.getElementById('unitFactionSwatch');
+const unitNameInputEl = document.getElementById('unitNameInput');
+const unitPersonnelInputEl = document.getElementById('unitPersonnelInput');
+const unitNotesInputEl = document.getElementById('unitNotesInput');
+
+function syncUnitBrushInputs(){
+  if (!unitFactionSelectEl) return;
+  const prev = state.brush.unitOwnerCode;
+  unitFactionSelectEl.innerHTML = '';
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = '— No faction —';
+  unitFactionSelectEl.appendChild(blank);
+  let found = false;
+  let selectedName = '';
+  for (const name of sortedFactionNames()){
+    const rec = state.factions.get(name);
+    const code = formatFactionCode(rec.code);
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = `${name} (${code})`;
+    unitFactionSelectEl.appendChild(opt);
+    if (code === prev){
+      found = true;
+      selectedName = name;
+    }
+  }
+  state.brush.unitOwnerCode = found ? prev : '';
+  unitFactionSelectEl.value = state.brush.unitOwnerCode;
+  setBrushSwatch(unitFactionSwatchEl, selectedName, false);
+  if (unitNameInputEl && document.activeElement !== unitNameInputEl){
+    unitNameInputEl.value = state.brush.unitName;
+  }
+  if (unitPersonnelInputEl && document.activeElement !== unitPersonnelInputEl){
+    unitPersonnelInputEl.value = state.brush.unitPersonnel;
+  }
+  if (unitNotesInputEl && document.activeElement !== unitNotesInputEl){
+    unitNotesInputEl.value = state.brush.unitNotes;
+  }
+}
+
+if (unitFactionSelectEl){
+  unitFactionSelectEl.addEventListener('change', () => {
+    state.brush.unitOwnerCode = unitFactionSelectEl.value;
+    syncUnitBrushInputs();
+  });
+}
+if (unitNameInputEl){
+  unitNameInputEl.addEventListener('input', () => {
+    state.brush.unitName = unitNameInputEl.value;
+  });
+}
+if (unitPersonnelInputEl){
+  unitPersonnelInputEl.addEventListener('input', () => {
+    const n = Math.max(1, Math.round(Number(unitPersonnelInputEl.value)) || 1000);
+    state.brush.unitPersonnel = n;
+  });
+  unitPersonnelInputEl.addEventListener('change', () => {
+    const n = Math.max(1, Math.round(Number(unitPersonnelInputEl.value)) || 1000);
+    state.brush.unitPersonnel = n;
+    unitPersonnelInputEl.value = n;
+  });
+}
+if (unitNotesInputEl){
+  unitNotesInputEl.addEventListener('input', () => {
+    state.brush.unitNotes = unitNotesInputEl.value;
+  });
+}
+
 function sanitizeCustomData(raw){
   const out = {};
   if (raw && typeof raw === 'object'){
@@ -1763,6 +2107,160 @@ function updateSelectedHexInfo(){
     ${capitalLine}
   `;
 }
+
+function renderHexBuildingsList(){
+  const wrap = document.getElementById('hexBuildingsWrap');
+  const listEl = document.getElementById('hexBuildingsList');
+  if (!wrap || !listEl) return;
+  const hex = state.selectedHex;
+  const buildings = hex ? (hex.buildings || []) : [];
+  wrap.hidden = !hex;
+  listEl.innerHTML = '';
+  if (!hex) return;
+  if (!buildings.length){
+    listEl.innerHTML = '<div class="hint">No buildings on this hex.</div>';
+    return;
+  }
+  for (const b of buildings){
+    const row = document.createElement('div');
+    row.className = 'building-row';
+
+    const opBtn = document.createElement('button');
+    opBtn.type = 'button';
+    opBtn.className = 'op-dot ' + (b.operational === false ? 'inactive' : 'active');
+    opBtn.title = b.operational === false ? 'Mark operational' : 'Mark inactive';
+    opBtn.addEventListener('click', () => {
+      toggleBuildingOperational(state.selectedHex, b.id);
+      refreshSelectedHexPanel();
+      render();
+      updateInspector(state.hoveredHex || state.selectedHex);
+    });
+
+    const swatch = document.createElement('span');
+    swatch.className = 'building-faction-swatch';
+    swatch.style.background = buildingOwnerColor(b.ownerFactionCode);
+    swatch.title = b.ownerFactionCode || 'No faction';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'building-name';
+    nameEl.textContent = formatBuildingHoverLine(b);
+    nameEl.title = b.operational === false ? 'Inactive' : 'Operational';
+
+    const actionsEl = document.createElement('div');
+    actionsEl.className = 'route-actions';
+
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'btn-icon-sm';
+    renameBtn.innerHTML = '✎';
+    renameBtn.title = 'Rename';
+    renameBtn.addEventListener('click', () => {
+      const next = prompt(`Rename "${b.name}" to:`, b.name);
+      if (next !== null){
+        renameBuildingOnHex(state.selectedHex, b.id, next);
+        refreshSelectedHexPanel();
+        render();
+        updateInspector(state.hoveredHex || state.selectedHex);
+      }
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn-icon-sm danger';
+    deleteBtn.innerHTML = '×';
+    deleteBtn.title = 'Demolish';
+    deleteBtn.addEventListener('click', () => {
+      if (!state.prefConfirmDeletes || confirm(`Demolish "${b.name}"?`)){
+        deleteBuildingOnHex(state.selectedHex, b.id);
+        refreshSelectedHexPanel();
+        render();
+        updateInspector(state.hoveredHex || state.selectedHex);
+      }
+    });
+
+    actionsEl.appendChild(renameBtn);
+    actionsEl.appendChild(deleteBtn);
+    row.appendChild(opBtn);
+    row.appendChild(swatch);
+    row.appendChild(nameEl);
+    row.appendChild(actionsEl);
+    listEl.appendChild(row);
+  }
+}
+
+function renderHexUnitsList(){
+  const wrap = document.getElementById('hexUnitsWrap');
+  const listEl = document.getElementById('hexUnitsList');
+  if (!wrap || !listEl) return;
+  const hex = state.selectedHex;
+  const units = hex ? (hex.units || []) : [];
+  wrap.hidden = !hex;
+  listEl.innerHTML = '';
+  if (!hex) return;
+  if (!units.length){
+    listEl.innerHTML = '<div class="hint">No units on this hex.</div>';
+    return;
+  }
+  for (const u of units){
+    const row = document.createElement('div');
+    row.className = 'building-row';
+
+    const swatch = document.createElement('span');
+    swatch.className = 'building-faction-swatch';
+    swatch.style.background = buildingOwnerColor(u.ownerFactionCode);
+    swatch.title = u.ownerFactionCode || 'No faction';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'building-name';
+    nameEl.textContent = formatUnitHoverLine(u);
+    nameEl.title = u.notes || u.name;
+
+    const actionsEl = document.createElement('div');
+    actionsEl.className = 'route-actions';
+
+    const renameBtn = document.createElement('button');
+    renameBtn.type = 'button';
+    renameBtn.className = 'btn-icon-sm';
+    renameBtn.innerHTML = '✎';
+    renameBtn.title = 'Rename';
+    renameBtn.addEventListener('click', () => {
+      const next = prompt(`Rename "${u.name}" to:`, u.name);
+      if (next !== null){
+        renameUnitOnHex(state.selectedHex, u.id, next);
+        refreshSelectedHexPanel();
+        render();
+        updateInspector(state.hoveredHex || state.selectedHex);
+      }
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'btn-icon-sm danger';
+    deleteBtn.innerHTML = '×';
+    deleteBtn.title = 'Disband';
+    deleteBtn.addEventListener('click', () => {
+      if (!state.prefConfirmDeletes || confirm(`Disband "${u.name}"?`)){
+        deleteUnitOnHex(state.selectedHex, u.id);
+        refreshSelectedHexPanel();
+        render();
+        updateInspector(state.hoveredHex || state.selectedHex);
+      }
+    });
+
+    actionsEl.appendChild(renameBtn);
+    actionsEl.appendChild(deleteBtn);
+    row.appendChild(swatch);
+    row.appendChild(nameEl);
+    row.appendChild(actionsEl);
+    listEl.appendChild(row);
+  }
+}
+
+document.getElementById('addHexUnitBtn').addEventListener('click', () => {
+  if (!state.selectedHex) return;
+  executeAtomicDelta([state.selectedHex], () => stampUnitOnHex(state.selectedHex));
+  refreshSelectedHexPanel();
+  render();
+  updateInspector(state.hoveredHex || state.selectedHex);
+});
 
 function setCustomField(oldKey, nextKey, value){
   if (!state.selectedHex || !nextKey) return;
@@ -1871,6 +2369,8 @@ function renderCustomDataRows(){
 
 export function refreshSelectedHexPanel(){
   updateSelectedHexInfo();
+  renderHexBuildingsList();
+  renderHexUnitsList();
   const locked = document.getElementById('customDataLocked');
   const editor = document.getElementById('customDataEditor');
   const hasHex = !!state.selectedHex;
@@ -2094,7 +2594,7 @@ function exportOwners(){
 
 function exportMap(){
   const exportHexes = Array.from(state.hexes.values()).map(h => {
-    const cloned = { ...h };
+    const cloned = { ...h, buildings: h.buildings || [], units: h.units || [] };
     delete cloned.x;
     delete cloned.y;
     delete cloned.isCapital;
@@ -2104,6 +2604,7 @@ function exportMap(){
 
   const data = {
     meta: { version: 9, cols: state.mapCols, rows: state.mapRows, hexSize: HEX_SIZE, exportedAt: new Date().toISOString() },
+    buildingTypes: state.buildingTypes.map(t => ({ building_id: t.building_id, name: t.name, icon: t.icon })),
     factions: exportFactions(),
     owners: exportOwners(),
     cultures: exportCultures(),
@@ -2196,7 +2697,9 @@ function importMap(file){
           region,
           culture,
           cityName: h.cityName || null,
-          customData: sanitizeCustomData(h.customData)
+          customData: sanitizeCustomData(h.customData),
+          buildings: parseBuildings(h.buildings),
+          units: parseUnits(h.units)
         });
         if (owner) ensureFaction(owner);
         if (loyalty) ensureFaction(loyalty, { type: 'nonstate' });
@@ -2217,6 +2720,8 @@ function importMap(file){
       ensureFactionCodes();
       pruneUnusedCultures();
       restoreRoutes(Array.isArray(data.routes) ? data.routes : []);
+      state.buildingTypes = parseBuildingTypes(data.buildingTypes);
+      refreshBuildingUi();
       refreshPathUi();
       refreshRouteList();
       invalidatePopulationStats();
@@ -2268,8 +2773,12 @@ function applyTerrainDefs(defs){
     };
   });
   // Surface terrains added after a settings blob was saved.
-  DEFAULT_TERRAIN_DEFS.forEach(def => {
-    if (!state.TERRAIN_DEFS.some(t => t.id === def.id)) state.TERRAIN_DEFS.push({ ...def });
+  DEFAULT_TERRAIN_DEFS.forEach((def, i) => {
+    if (state.TERRAIN_DEFS.some(t => t.id === def.id)) return;
+    const prev = i > 0 ? DEFAULT_TERRAIN_DEFS[i - 1] : null;
+    const at = prev ? state.TERRAIN_DEFS.findIndex(t => t.id === prev.id) : -1;
+    if (at >= 0) state.TERRAIN_DEFS.splice(at + 1, 0, { ...def });
+    else state.TERRAIN_DEFS.push({ ...def });
   });
   rebuildTerrainColors();
   rebuildTerrainSwatches();
@@ -2499,10 +3008,12 @@ function revertSettingsToDefaults(){
 }
 
 document.getElementById('settingsBtn').addEventListener('click', () => {
+  closeTopDrawer();
   syncSettingsFields();
   openModal('settingsModal');
 });
 document.getElementById('aboutBtn').addEventListener('click', () => {
+  closeTopDrawer();
   populateAboutModal();
   openModal('aboutModal');
 });

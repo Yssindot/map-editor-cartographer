@@ -13,10 +13,11 @@ export const DEFAULT_TERRAIN_DEFS = [
   { id:'steppe',    label:'Steppe',    color:'#b5a672' },
   { id:'desert',    label:'Desert',    color:'#e0be75' },
   { id:'extreme_desert', label:'Extreme Desert', color:'#8c6a47' },
-  { id:'urban',     label:'Urban',     color:'#3a3a42' }
+  { id:'urban',     label:'Urban',     color:'#3a3a42' },
+  { id:'urban_ruins', label:'Urban Ruins', color:'#5a5248' }
 ];
 export const LEGACY_TERRAIN_IDS = { plains: 'grassland', river: 'grassland' };
-export const APP_VERSION = '0.8.0';
+export const APP_VERSION = '0.9.0';
 
 export const ELEVATION_DEFS = [
   { id:'flat',      label:'Flat' },
@@ -34,6 +35,14 @@ export const ROUTE_DEFS = [
 export const ROUTE_BY_ID = Object.fromEntries(ROUTE_DEFS.map(d => [d.id, d]));
 export const ROUTE_DRAW_ORDER = { river1: 0, river2: 1, dirt: 2, asphalt: 3 };
 export const PATH_INVALID_COLOR = '#ff5a5a';
+
+export const DEFAULT_BUILDING_TYPES = [
+  { building_id: 'outpost', name: 'Outpost', icon: 'shield' },
+  { building_id: 'embassy', name: 'Embassy', icon: 'landmark' },
+  { building_id: 'covert_camp', name: 'Covert Camp', icon: 'tent' },
+  { building_id: 'facility', name: 'Industrial Facility', icon: 'factory' },
+  { building_id: 'depot', name: 'Supply Depot', icon: 'box' }
+];
 
 export const FACTION_TYPES = [
   { id: 'state',    label: 'State' },

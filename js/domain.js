@@ -2,7 +2,7 @@ import { state, hooks } from './state.js';
 import {
   HEX_SIZE, MIN_ZOOM, MAX_ZOOM, DEFAULT_MAX_UNDO, LEGACY_TERRAIN_IDS,
   ROUTE_DEFS, ROUTE_BY_ID, FACTION_TYPE_LABELS, FACTION_CODE_LEN,
-  HEATMAP_STOPS, AUTOSAVE_KEY
+  HEATMAP_STOPS, AUTOSAVE_KEY, DEFAULT_BUILDING_TYPES
 } from './constants.js';
 import {
   axialToPixel, pixelToAxial, axialRound, offsetToAxial, hexRange,
@@ -428,6 +428,7 @@ export const TOOL_DEFS = [
     id: 'terrain',
     label: 'Terrain',
     kind: 'paint',
+    number: '1',
     shortcut: '1',
     hint: '<div><b>Left</b> drag — paint terrain</div>',
     previewFill: 'rgba(157, 187, 97, 0.28)',
@@ -439,6 +440,7 @@ export const TOOL_DEFS = [
     id: 'owner',
     label: 'Faction',
     kind: 'paint',
+    number: '2',
     shortcut: '2',
     hint: '<div><b>Left</b> drag — paint faction territory</div>',
     previewFill: 'rgba(201, 162, 77, 0.28)',
@@ -462,74 +464,11 @@ export const TOOL_DEFS = [
     }
   },
   {
-    id: 'region',
-    label: 'Region',
-    kind: 'paint',
-    shortcut: '0',
-    hint: '<div><b>Left</b> drag — paint administrative region</div>',
-    previewFill: 'rgba(232, 214, 160, 0.28)',
-    apply(hex){
-      const rec = getRegion(state.brush.regionId);
-      if (!rec){
-        hex.region = null;
-        return;
-      }
-      if (hex.owner !== rec.faction) return;
-      hex.region = rec.id;
-    },
-    afterStroke(){
-      hooks.refreshRegionList();
-    }
-  },
-  {
-    id: 'loyalty',
-    label: 'Loyalty',
-    kind: 'paint',
-    shortcut: '3',
-    hint: '<div><b>Left</b> drag — paint loyalty</div>',
-    previewFill: 'rgba(138, 144, 152, 0.28)',
-    apply(hex){
-      hex.loyalty = state.factions.has(state.brush.loyalty) ? state.brush.loyalty : null;
-    },
-    afterStroke(){
-      hooks.refreshLoyaltyList();
-    }
-  },
-  {
-    id: 'controller',
-    label: 'De Facto',
-    kind: 'paint',
-    shortcut: '9',
-    hint: '<div><b>Left</b> drag — paint de facto control</div>',
-    previewFill: 'rgba(196, 92, 54, 0.28)',
-    apply(hex){
-      hex.controller = state.factions.has(state.brush.controller) ? state.brush.controller : null;
-    },
-    afterStroke(){
-      hooks.refreshControllerList();
-    }
-  },
-  {
-    id: 'culture',
-    label: 'Culture',
-    kind: 'paint',
-    shortcut: '4',
-    hint: '<div><b>Left</b> drag — paint culture</div>',
-    previewFill: 'rgba(156, 110, 185, 0.28)',
-    apply(hex){
-      const next = state.brush.culture.trim() === '' ? null : state.brush.culture.trim();
-      hex.culture = next;
-      if (next) ensureCulture(next);
-    },
-    afterStroke(){
-      hooks.refreshCultureList();
-    }
-  },
-  {
     id: 'population',
     label: 'Population',
     kind: 'paint',
-    shortcut: '5',
+    number: '3',
+    shortcut: '3',
     hint: '<div><b>Left</b> drag — paint population</div>',
     previewFill: 'rgba(79, 195, 255, 0.28)',
     apply(hex, paintCtx = {}){
@@ -547,9 +486,32 @@ export const TOOL_DEFS = [
     }
   },
   {
+    id: 'building',
+    label: 'Buildings',
+    kind: 'stamp',
+    number: '4',
+    shortcut: '4',
+    hint: '<div><b>Left</b> click — stamp a building instance</div><div>Owner is independent of tile faction and de facto control</div>',
+    apply(hex){
+      stampBuildingOnHex(hex);
+    }
+  },
+  {
+    id: 'unit',
+    label: 'Units',
+    kind: 'stamp',
+    number: '5',
+    shortcut: '5',
+    hint: '<div><b>Left</b> click — stamp a unit onto the hex</div><div>Owner is independent of tile faction, de facto control, and buildings</div>',
+    apply(hex){
+      stampUnitOnHex(hex);
+    }
+  },
+  {
     id: 'label',
     label: 'City / Region Label',
     kind: 'stamp',
+    number: '6',
     shortcut: '6',
     hint: '<div><b>Left</b> click — apply label</div>',
     apply(hex){
@@ -560,6 +522,7 @@ export const TOOL_DEFS = [
     id: 'path',
     label: 'Road / River',
     kind: 'path',
+    number: '7',
     shortcut: '7',
     hint: '<div><b>Click</b> — start or finish path</div><div><b>Shift+Click</b> — add waypoint</div><div><b>Click end</b> — extend path</div><div><b>Esc</b> — cancel</div>'
   },
@@ -567,11 +530,78 @@ export const TOOL_DEFS = [
     id: 'elevation',
     label: 'Elevation',
     kind: 'paint',
+    number: '8',
     shortcut: '8',
     hint: '<div><b>Left</b> drag — paint elevation</div>',
     previewFill: 'rgba(40, 40, 40, 0.28)',
     apply(hex){
       hex.elevation = state.brush.elevation;
+    }
+  },
+  {
+    id: 'culture',
+    label: 'Culture',
+    kind: 'paint',
+    number: '9',
+    shortcut: '9',
+    hint: '<div><b>Left</b> drag — paint culture</div>',
+    previewFill: 'rgba(156, 110, 185, 0.28)',
+    apply(hex){
+      const next = state.brush.culture.trim() === '' ? null : state.brush.culture.trim();
+      hex.culture = next;
+      if (next) ensureCulture(next);
+    },
+    afterStroke(){
+      hooks.refreshCultureList();
+    }
+  },
+  {
+    id: 'loyalty',
+    label: 'Loyalty',
+    kind: 'paint',
+    number: '0',
+    shortcut: '0',
+    hint: '<div><b>Left</b> drag — paint loyalty</div>',
+    previewFill: 'rgba(138, 144, 152, 0.28)',
+    apply(hex){
+      hex.loyalty = state.factions.has(state.brush.loyalty) ? state.brush.loyalty : null;
+    },
+    afterStroke(){
+      hooks.refreshLoyaltyList();
+    }
+  },
+  {
+    id: 'controller',
+    label: 'De Facto',
+    kind: 'paint',
+    number: '10',
+    hint: '<div><b>Left</b> drag — paint de facto control</div>',
+    previewFill: 'rgba(196, 92, 54, 0.28)',
+    apply(hex){
+      hex.controller = state.factions.has(state.brush.controller) ? state.brush.controller : null;
+    },
+    afterStroke(){
+      hooks.refreshControllerList();
+    }
+  },
+  {
+    id: 'region',
+    label: 'Region',
+    kind: 'paint',
+    number: '11',
+    hint: '<div><b>Left</b> drag — paint administrative region</div>',
+    previewFill: 'rgba(232, 214, 160, 0.28)',
+    apply(hex){
+      const rec = getRegion(state.brush.regionId);
+      if (!rec){
+        hex.region = null;
+        return;
+      }
+      if (hex.owner !== rec.faction) return;
+      hex.region = rec.id;
+    },
+    afterStroke(){
+      hooks.refreshRegionList();
     }
   }
 ];
@@ -589,7 +619,262 @@ export function skipOceanForTool(tool = getToolDef()){
   return !state.prefAllowOceanElevPop && (tool.id === 'population' || tool.id === 'elevation' || tool.id === 'culture' || tool.id === 'loyalty' || tool.id === 'controller');
 }
 
-export function cloneHex(h){ return { ...h, elevation: h.elevation || 'flat', controller: h.controller || null, region: h.region || null, customData: { ...h.customData } }; }
+export function slugifyBuildingId(raw){
+  return String(raw || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48);
+}
+
+export function cloneBuildingTypes(list = state.buildingTypes){
+  return (list || []).map(t => ({
+    building_id: t.building_id,
+    name: t.name,
+    icon: t.icon || 'building-2'
+  }));
+}
+
+export function parseBuildingTypes(raw){
+  if (!Array.isArray(raw)) return cloneBuildingTypes(DEFAULT_BUILDING_TYPES);
+  const out = [];
+  const seen = new Set();
+  for (const t of raw){
+    if (!t || typeof t !== 'object') continue;
+    const building_id = slugifyBuildingId(t.building_id);
+    const name = typeof t.name === 'string' ? t.name.trim() : '';
+    if (!building_id || !name || seen.has(building_id)) continue;
+    seen.add(building_id);
+    out.push({
+      building_id,
+      name,
+      icon: typeof t.icon === 'string' && t.icon ? t.icon : 'building-2'
+    });
+  }
+  return out.length ? out : cloneBuildingTypes(DEFAULT_BUILDING_TYPES);
+}
+
+export function cloneBuildings(list){
+  return (list || []).map(b => ({
+    id: b.id,
+    building_id: b.building_id,
+    name: b.name,
+    ownerFactionCode: b.ownerFactionCode || '',
+    operational: b.operational !== false,
+    customData: { ...(b.customData || {}) }
+  }));
+}
+
+export function parseBuildings(raw){
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const b of raw){
+    if (!b || typeof b !== 'object') continue;
+    const building_id = slugifyBuildingId(b.building_id);
+    if (!building_id) continue;
+    const name = typeof b.name === 'string' && b.name.trim() ? b.name.trim() : building_id;
+    out.push({
+      id: typeof b.id === 'string' && b.id ? b.id : `bld_${Date.now()}_${++state.nextBuildingSeq}`,
+      building_id,
+      name,
+      ownerFactionCode: typeof b.ownerFactionCode === 'string' ? b.ownerFactionCode : '',
+      operational: b.operational !== false,
+      customData: (b.customData && typeof b.customData === 'object') ? { ...b.customData } : {}
+    });
+  }
+  return out;
+}
+
+export function hexBuildings(hex){
+  if (!hex.buildings) hex.buildings = [];
+  return hex.buildings;
+}
+
+export function getBuildingType(id){
+  return state.buildingTypes.find(t => t.building_id === id) || null;
+}
+
+export function upsertBuildingType(building_id, name, icon){
+  const id = slugifyBuildingId(building_id);
+  const label = (name || '').trim();
+  if (!id || !label) return null;
+  const existing = getBuildingType(id);
+  if (existing){
+    existing.name = label;
+    if (icon) existing.icon = icon;
+    return existing;
+  }
+  const rec = { building_id: id, name: label, icon: icon || 'building-2' };
+  state.buildingTypes.push(rec);
+  return rec;
+}
+
+export function stampBuildingOnHex(hex){
+  const type = getBuildingType(state.brush.buildingTypeId);
+  if (!hex || !type) return;
+  const customName = (state.brush.buildingName || '').trim();
+  hexBuildings(hex).push({
+    id: `bld_${Date.now()}_${++state.nextBuildingSeq}`,
+    building_id: type.building_id,
+    name: customName || type.name,
+    ownerFactionCode: state.brush.buildingOwnerCode || '',
+    operational: true,
+    customData: {}
+  });
+}
+
+export function renameBuildingOnHex(hex, buildingId, nextName){
+  const name = (nextName || '').trim();
+  if (!hex || !name) return false;
+  const rec = hexBuildings(hex).find(b => b.id === buildingId);
+  if (!rec || rec.name === name) return false;
+  beginAction();
+  markHexForUndo(hex);
+  rec.name = name;
+  commitAction();
+  return true;
+}
+
+export function deleteBuildingOnHex(hex, buildingId){
+  if (!hex) return false;
+  const buildings = hexBuildings(hex);
+  const idx = buildings.findIndex(b => b.id === buildingId);
+  if (idx < 0) return false;
+  beginAction();
+  markHexForUndo(hex);
+  buildings.splice(idx, 1);
+  commitAction();
+  return true;
+}
+
+export function toggleBuildingOperational(hex, buildingId){
+  if (!hex) return false;
+  const rec = hexBuildings(hex).find(b => b.id === buildingId);
+  if (!rec) return false;
+  beginAction();
+  markHexForUndo(hex);
+  rec.operational = rec.operational === false;
+  commitAction();
+  return true;
+}
+
+export function buildingOwnerColor(code){
+  const name = findFactionNameByCode(normalizeFactionCode(code));
+  return name ? factionColor(name) : '#8a9098';
+}
+
+export function formatBuildingHoverLine(b){
+  const type = getBuildingType(b.building_id);
+  const typeName = type ? type.name : b.building_id;
+  const code = b.ownerFactionCode || '—';
+  return `[${code}] ${b.name} (${typeName})`;
+}
+
+export function makeUnitId(){
+  return 'unit_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+}
+
+export function cloneUnits(list){
+  return (list || []).map(u => ({
+    id: u.id,
+    name: u.name,
+    ownerFactionCode: u.ownerFactionCode || '',
+    personnel: u.personnel,
+    notes: u.notes || '',
+    customData: { ...(u.customData || {}) }
+  }));
+}
+
+export function parseUnits(raw){
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const u of raw){
+    if (!u || typeof u !== 'object') continue;
+    const name = typeof u.name === 'string' && u.name.trim() ? u.name.trim() : 'Unit';
+    const personnel = Math.max(1, Math.round(Number(u.personnel)) || 1000);
+    out.push({
+      id: typeof u.id === 'string' && u.id ? u.id : makeUnitId(),
+      name,
+      ownerFactionCode: typeof u.ownerFactionCode === 'string' ? u.ownerFactionCode : '',
+      personnel,
+      notes: typeof u.notes === 'string' ? u.notes : '',
+      customData: (u.customData && typeof u.customData === 'object') ? { ...u.customData } : {}
+    });
+  }
+  return out;
+}
+
+export function hexUnits(hex){
+  if (!hex.units) hex.units = [];
+  return hex.units;
+}
+
+export function stampUnitOnHex(hex){
+  if (!hex) return;
+  const customName = (state.brush.unitName || '').trim();
+  const personnel = Math.max(1, Math.round(Number(state.brush.unitPersonnel)) || 1000);
+  hexUnits(hex).push({
+    id: makeUnitId(),
+    name: customName || '1st Division',
+    ownerFactionCode: state.brush.unitOwnerCode || '',
+    personnel,
+    notes: (state.brush.unitNotes || '').trim(),
+    customData: {}
+  });
+}
+
+export function renameUnitOnHex(hex, unitId, nextName){
+  const name = (nextName || '').trim();
+  if (!hex || !name) return false;
+  const rec = hexUnits(hex).find(u => u.id === unitId);
+  if (!rec || rec.name === name) return false;
+  beginAction();
+  markHexForUndo(hex);
+  rec.name = name;
+  commitAction();
+  return true;
+}
+
+export function setUnitPersonnelOnHex(hex, unitId, nextPersonnel){
+  const personnel = Math.max(1, Math.round(Number(nextPersonnel)) || 0);
+  if (!hex || !Number.isFinite(personnel)) return false;
+  const rec = hexUnits(hex).find(u => u.id === unitId);
+  if (!rec || rec.personnel === personnel) return false;
+  beginAction();
+  markHexForUndo(hex);
+  rec.personnel = personnel;
+  commitAction();
+  return true;
+}
+
+export function deleteUnitOnHex(hex, unitId){
+  if (!hex) return false;
+  const units = hexUnits(hex);
+  const idx = units.findIndex(u => u.id === unitId);
+  if (idx < 0) return false;
+  beginAction();
+  markHexForUndo(hex);
+  units.splice(idx, 1);
+  commitAction();
+  return true;
+}
+
+export function formatPersonnel(n){
+  return Number(n).toLocaleString('en-US');
+}
+
+export function formatUnitHoverLine(u){
+  const code = u.ownerFactionCode || '—';
+  return `[${code}] ${u.name} (${formatPersonnel(u.personnel)} men)`;
+}
+
+export function cloneHex(h){
+  return {
+    ...h,
+    elevation: h.elevation || 'flat',
+    controller: h.controller || null,
+    region: h.region || null,
+    customData: { ...h.customData },
+    buildings: cloneBuildings(h.buildings),
+    units: cloneUnits(h.units)
+  };
+}
 
 export function cloneWaypoints(waypoints){
   return (waypoints || []).map(w => ({ q: w.q, r: w.r }));
@@ -701,7 +986,17 @@ export function validatePath(waypoints, excludeRouteId){
 }
 
 export function snapshotState(){
-  return { hexes: Array.from(state.hexes.values()).map(cloneHex), mapCols: state.mapCols, mapRows: state.mapRows, factions: snapshotFactions(), cultures: snapshotCultures(), regions: snapshotRegions(), routes: cloneRoutes() };
+  return {
+    hexes: Array.from(state.hexes.values()).map(cloneHex),
+    mapCols: state.mapCols,
+    mapRows: state.mapRows,
+    factions: snapshotFactions(),
+    cultures: snapshotCultures(),
+    regions: snapshotRegions(),
+    routes: cloneRoutes(),
+    buildingTypes: cloneBuildingTypes(),
+    nextBuildingSeq: state.nextBuildingSeq
+  };
 }
 
 export function applyFullState(full){
@@ -714,6 +1009,11 @@ export function applyFullState(full){
   restoreCultures(full.cultures);
   restoreRegions(full.regions || { nextId: 1, list: [] });
   restoreRoutes(full.routes);
+  state.buildingTypes = parseBuildingTypes(full.buildingTypes);
+  if (Number.isFinite(full.nextBuildingSeq)) state.nextBuildingSeq = full.nextBuildingSeq;
+  if (!state.buildingTypes.some(t => t.building_id === state.brush.buildingTypeId)){
+    state.brush.buildingTypeId = state.buildingTypes[0] ? state.buildingTypes[0].building_id : '';
+  }
   invalidateFactionCache();
 }
 
@@ -881,6 +1181,7 @@ export function undo(){
   reresolveSelection();
   invalidatePopulationStats();
   hooks.render();
+  hooks.updateInspector(state.hoveredHex);
   hooks.refreshFactionList();
   hooks.refreshLoyaltyList();
   hooks.refreshControllerList();
@@ -889,6 +1190,7 @@ export function undo(){
   hooks.refreshRouteList();
   hooks.refreshSelectedHexPanel();
   updateHistoryButtons();
+  hooks.refreshBuildingUi();
 }
 
 export function redo(){
@@ -926,6 +1228,7 @@ export function redo(){
   reresolveSelection();
   invalidatePopulationStats();
   hooks.render();
+  hooks.updateInspector(state.hoveredHex);
   hooks.refreshFactionList();
   hooks.refreshLoyaltyList();
   hooks.refreshControllerList();
@@ -934,6 +1237,7 @@ export function redo(){
   hooks.refreshRouteList();
   hooks.refreshSelectedHexPanel();
   updateHistoryButtons();
+  hooks.refreshBuildingUi();
 }
 
 export function reresolveSelection(){
@@ -997,7 +1301,7 @@ export function generateMap(cols, rows){
       const coords = axialToPixel(q, r, HEX_SIZE);
       state.hexes.set(`${q},${r}`, {
         q, r, x: coords.x, y: coords.y, terrain: 'ocean', elevation: 'flat', population: 0, owner: null,
-        loyalty: null, controller: null, region: null, culture: null, cityName: null, customData: {}
+        loyalty: null, controller: null, region: null, culture: null, cityName: null, customData: {}, buildings: [], units: []
       });
     }
   }

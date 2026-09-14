@@ -10,7 +10,8 @@ import {
   getPopulationStats, getHeatmapColor, formatPop, updateHeatmapLegend,
   getToolDef, skipOceanForTool, isWaterHex, routeWorldPolylines,
   validatePath, cloneWaypoints, getSelectedRoute, findRouteAtHex, isRouteBusy,
-  routesOnHex, hexRegion, getRegion
+  routesOnHex, hexRegion, getRegion, buildingOwnerColor, formatBuildingHoverLine,
+  formatUnitHoverLine
 } from './domain.js';
 
 export function drawBackgroundImage(){
@@ -530,6 +531,126 @@ export function drawHexOutline(hex, color, dash){
   }
 }
 
+export function drawBuildingMarkers(){
+  if (!state.viewLayers.buildings) return;
+  const tl = screenToWorld(0, 0);
+  const br = screenToWorld(canvas.width, canvas.height);
+  const margin = HEX_SIZE * 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (const hex of state.hexes.values()){
+    const buildings = hex.buildings || [];
+    if (!buildings.length) continue;
+    if (hex.x < tl.x - margin || hex.x > br.x + margin || hex.y < tl.y - margin || hex.y > br.y + margin) continue;
+
+    const groups = [];
+    const indexByCode = new Map();
+    for (const b of buildings){
+      const code = b.ownerFactionCode || '';
+      let group = indexByCode.get(code);
+      if (!group){
+        group = { code, count: 0 };
+        indexByCode.set(code, group);
+        groups.push(group);
+      }
+      group.count += 1;
+    }
+
+    const n = groups.length;
+    const badgeR = n === 1 ? HEX_SIZE * 0.18 : Math.max(HEX_SIZE * 0.12, HEX_SIZE * 0.28 / n);
+    ctx.font = `700 ${badgeR * 1.15}px sans-serif`;
+    const offsets = factionBadgeOffsets(n);
+
+    groups.forEach((group, i) => {
+      const pos = offsets[i];
+      const cx = hex.x + pos.dx;
+      const cy = hex.y + pos.dy;
+      ctx.beginPath();
+      addHexToPath(ctx, cx, cy, badgeR);
+      ctx.fillStyle = buildingOwnerColor(group.code);
+      ctx.fill();
+      ctx.lineWidth = HEX_SIZE * 0.045;
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.stroke();
+      if (group.count > 1){
+        ctx.lineWidth = HEX_SIZE * 0.06;
+        ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+        ctx.fillStyle = '#ffffff';
+        const label = String(group.count);
+        ctx.strokeText(label, cx, cy);
+        ctx.fillText(label, cx, cy);
+      }
+    });
+  }
+}
+
+export function drawUnitMarkers(){
+  if (!state.viewLayers.units) return;
+  const tl = screenToWorld(0, 0);
+  const br = screenToWorld(canvas.width, canvas.height);
+  const margin = HEX_SIZE * 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (const hex of state.hexes.values()){
+    const units = hex.units || [];
+    if (!units.length) continue;
+    if (hex.x < tl.x - margin || hex.x > br.x + margin || hex.y < tl.y - margin || hex.y > br.y + margin) continue;
+
+    const counts = new Map();
+    let dominant = { code: units[0].ownerFactionCode || '', count: 0 };
+    for (const u of units){
+      const code = u.ownerFactionCode || '';
+      const next = (counts.get(code) || 0) + 1;
+      counts.set(code, next);
+      if (next > dominant.count) dominant = { code, count: next };
+    }
+
+    const color = buildingOwnerColor(dominant.code);
+    const cx = hex.x;
+    const cy = hex.y + HEX_SIZE * 0.42;
+    const r = HEX_SIZE * (units.length > 1 ? 0.20 : 0.16);
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r);
+    ctx.lineTo(cx + r * 0.72, cy);
+    ctx.lineTo(cx, cy + r * 0.85);
+    ctx.lineTo(cx - r * 0.72, cy);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(12, 16, 22, 0.92)';
+    ctx.fill();
+    ctx.lineWidth = HEX_SIZE * 0.07;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+
+    if (units.length > 1){
+      ctx.font = `700 ${r * 0.95}px sans-serif`;
+      ctx.lineWidth = HEX_SIZE * 0.06;
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.fillStyle = '#ffffff';
+      const label = `⚔ ${units.length}`;
+      ctx.strokeText(label, cx, cy);
+      ctx.fillText(label, cx, cy);
+    }
+  }
+}
+
+function factionBadgeOffsets(n){
+  if (n <= 1) return [{ dx: HEX_SIZE * 0.38, dy: HEX_SIZE * 0.30 }];
+  if (n === 2) return [
+    { dx: HEX_SIZE * 0.18, dy: HEX_SIZE * 0.30 },
+    { dx: HEX_SIZE * 0.52, dy: HEX_SIZE * 0.30 }
+  ];
+  const ringR = Math.min(HEX_SIZE * 0.40, HEX_SIZE * 0.16 + n * HEX_SIZE * 0.035);
+  const pts = [];
+  for (let i = 0; i < n; i++){
+    const a = -Math.PI / 2 + (i / n) * Math.PI * 2;
+    pts.push({ dx: Math.cos(a) * ringR, dy: Math.sin(a) * ringR });
+  }
+  return pts;
+}
+
 export function render(){
   ctx.fillStyle = '#05070a';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -549,6 +670,8 @@ export function render(){
   drawRoutes();
   drawPathOverlay();
   drawCityLabels();
+  drawBuildingMarkers();
+  drawUnitMarkers();
   
   drawBrushPreview();
   if (state.selectedHex) drawHexOutline(state.selectedHex, '#4fc3ff', true);
@@ -568,38 +691,57 @@ export function updateHud(){
 
 export function updateInspector(hex){
   if (!hex){ inspectorHudEl.innerHTML = ''; return; }
+  if (state.activeTool === 'unit'){
+    const units = hex.units || [];
+    const listHtml = units.length
+      ? units.map(u => {
+          return `<div class="inspector-row building-hover-row"><span class="building-faction-swatch" style="background:${buildingOwnerColor(u.ownerFactionCode)}"></span> ${formatUnitHoverLine(u)}</div>`;
+        }).join('')
+      : '<div class="inspector-row">Units: None</div>';
+    inspectorHudEl.innerHTML = `
+      <div class="inspector-row"><b>Coord</b> ${hex.q}, ${hex.r}</div>
+      ${listHtml}
+    `;
+    return;
+  }
+  if (state.activeTool === 'building'){
+    const buildings = hex.buildings || [];
+    const listHtml = buildings.length
+      ? buildings.map(b => {
+          const opClass = b.operational === false ? 'inactive' : 'active';
+          return `<div class="inspector-row building-hover-row"><span class="op-dot ${opClass}"></span><span class="building-faction-swatch" style="background:${buildingOwnerColor(b.ownerFactionCode)}"></span> ${formatBuildingHoverLine(b)}</div>`;
+        }).join('')
+      : '<div class="inspector-row">Buildings: None</div>';
+    inspectorHudEl.innerHTML = `
+      <div class="inspector-row"><b>Coord</b> ${hex.q}, ${hex.r}</div>
+      ${listHtml}
+    `;
+    return;
+  }
   const terrainLabel = (state.TERRAIN_DEFS.find(t => t.id === hex.terrain) || {}).label || hex.terrain;
   const customEntries = Object.entries(hex.customData || {});
   const customHtml = customEntries.length
     ? `<div class="inspector-custom">${customEntries.map(([k, v]) => `<div><b>${k}</b> ${JSON.stringify(v)}</div>`).join('')}</div>`
     : '';
   const capitalOf = factionsWithCapitalAt(hex);
-  const capitalHtml = capitalOf.length
-    ? `<div class="inspector-row"><b>Capital of</b> ${capitalOf.join(', ')}</div>`
-    : '';
   const onRoutes = routesOnHex(hex).map(r => r.name);
-  const routesHtml = onRoutes.length
-    ? `<div class="inspector-row"><b>Routes</b> ${onRoutes.join(', ')}</div>`
-    : '';
   const regionRec = hexRegion(hex);
-  const regionHtml = regionRec
-    ? `<div class="inspector-row"><b>Region</b> ${regionRec.name} (${regionRec.type})${regionRec.governor ? ' · ' + regionRec.governor : ''}</div>`
-    : '';
-  inspectorHudEl.innerHTML = `
-    <div class="inspector-row"><b>Coord</b> ${hex.q}, ${hex.r}</div>
-    <div class="inspector-row"><b>Terrain</b> ${terrainLabel}</div>
-    <div class="inspector-row"><b>Elevation</b> ${ELEVATION_LABELS[hex.elevation] || hex.elevation || 'Flat'}</div>
-    <div class="inspector-row"><b>Population</b> ${hex.population}</div>
-    <div class="inspector-row"><b>Faction</b> ${hex.owner || '—'}</div>
-    ${regionHtml}
-    ${capitalHtml}
-    ${hex.controller && hex.controller !== hex.owner ? `<div class="inspector-row"><b>De facto</b> ${hex.controller}</div>` : ''}
-    <div class="inspector-row"><b>Loyalty</b> ${hex.loyalty || '—'}</div>
-    <div class="inspector-row"><b>Culture</b> ${hex.culture || '—'}</div>
-    <div class="inspector-row"><b>City</b> ${hex.cityName || '—'}</div>
-    ${routesHtml}
-    ${customHtml}
-  `;
+  const elevLabel = ELEVATION_LABELS[hex.elevation] || hex.elevation || 'Flat';
+  const rows = [
+    `<div class="inspector-row"><b>Coord</b> ${hex.q},${hex.r}</div>`,
+    `<div class="inspector-row"><b>Terrain</b> ${terrainLabel}</div>`
+  ];
+  if (hex.elevation && hex.elevation !== 'flat') rows.push(`<div class="inspector-row"><b>Elev</b> ${elevLabel}</div>`);
+  if (hex.population) rows.push(`<div class="inspector-row"><b>Pop</b> ${hex.population}</div>`);
+  if (hex.owner) rows.push(`<div class="inspector-row"><b>Faction</b> ${hex.owner}</div>`);
+  if (regionRec) rows.push(`<div class="inspector-row"><b>Region</b> ${regionRec.name}</div>`);
+  if (capitalOf.length) rows.push(`<div class="inspector-row"><b>Capital</b> ${capitalOf.join(', ')}</div>`);
+  if (hex.controller && hex.controller !== hex.owner) rows.push(`<div class="inspector-row"><b>De facto</b> ${hex.controller}</div>`);
+  if (hex.loyalty) rows.push(`<div class="inspector-row"><b>Loyalty</b> ${hex.loyalty}</div>`);
+  if (hex.culture) rows.push(`<div class="inspector-row"><b>Culture</b> ${hex.culture}</div>`);
+  if (hex.cityName) rows.push(`<div class="inspector-row"><b>City</b> ${hex.cityName}</div>`);
+  if (onRoutes.length) rows.push(`<div class="inspector-row"><b>Routes</b> ${onRoutes.join(', ')}</div>`);
+  inspectorHudEl.innerHTML = rows.join('') + customHtml;
 }
 
 export function resizeCanvas(){
@@ -610,3 +752,9 @@ export function resizeCanvas(){
   render();
 }
 window.addEventListener('resize', resizeCanvas);
+if (typeof ResizeObserver !== 'undefined'){
+  new ResizeObserver(() => {
+    const rect = canvasWrap.getBoundingClientRect();
+    if (canvas.width !== rect.width || canvas.height !== rect.height) resizeCanvas();
+  }).observe(canvasWrap);
+}
