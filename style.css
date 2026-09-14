@@ -268,6 +268,7 @@ button.btn:disabled:hover{ border-color:var(--border); color:var(--text); }
 .country-count.landless{ color:var(--danger); }
 
 .country-row{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.country-row.selected{ border:1px solid var(--accent); background:var(--panel-alt); border-radius:var(--radius); padding:2px 4px; }
 .country-name{
   flex:1; font-size:12px; color:var(--text); cursor:pointer;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -398,8 +399,9 @@ button.btn:disabled:hover{ border-color:var(--border); color:var(--text); }
   display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
 }
 .faction-modal-head h2{ font-size:16px; }
-#factionDeleteBtn{ width:26px; height:26px; font-size:12px; }
-#factionDeleteBtn svg{ width:14px; height:14px; }
+.faction-modal-head-actions{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.faction-modal-head-actions .btn-icon-sm{ width:26px; height:26px; font-size:12px; }
+.faction-modal-head-actions svg{ width:14px; height:14px; }
 
 .faction-identity{ display:flex; gap:14px; margin-bottom:14px; }
 .faction-flag{ width:96px; flex-shrink:0; }
@@ -422,6 +424,12 @@ button.btn:disabled:hover{ border-color:var(--border); color:var(--text); }
 .faction-identity-fields input,
 .faction-identity-fields select{ margin-bottom:8px; }
 .faction-identity-fields > :last-child{ margin-bottom:0; }
+.faction-name-row{ display:flex; gap:8px; }
+.faction-name-row #factionNameInput{ flex:1; min-width:0; }
+#factionCodeInput{
+  width:80px; flex:none; text-align:center;
+  text-transform:uppercase; letter-spacing:2px;
+}
 
 .faction-attrs{ display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:14px; }
 .faction-attr{

@@ -101,7 +101,11 @@ Paths may join or cross at a **single** hex but must not run along each other (t
 
 ### Factions
 
-Factions are authored in the **Faction Editor** modal rather than typed into the brush, and live in a `Map` keyed by their unique name. A record holds `color`, `type` (`state` / `nonstate`), `ideology`, `description`, an optional `flag` (a data URL, re-encoded down to 256 px on upload) and an optional `capital`.
+Factions are authored in the **Faction Editor** modal rather than typed into the brush, and live in a `Map` keyed by their unique name. A record holds `color`, a 4-character `code`, `type` (`state` / `nonstate`), `ideology`, `description`, an optional `flag` (a data URL, re-encoded down to 256 px on upload) and an optional `capital`.
+
+The **code** is the handle other tools sync on. It is held bare in memory (`0USA`) and always written to a file with an `F-` prefix (`F-0USA`); `normalizeFactionCode` strips that prefix and any non-alphanumerics back off on the way in. Codes must be unique, and `suggestFactionCode` derives one from the name (padding and then walking a numeric tail) so the editor can fill the field while the user types. It appears nowhere outside the Faction Editor.
+
+**Lorekeeper** uses the same passport fields (name, code, type, ideology, description, color, flag, capital). Faction import matches on `code` and updates those fields in place; lore (`mech`, `ai`, chronology) is ignored. A matching code keeps the map capital if the incoming file only has a city name. New factions (no matching code) still get a unique name and a free code. Lorekeeper type labels such as `Non-State Actor` map to `nonstate`.
 
 Nothing prunes the registry, so a faction may hold **zero territory** and still be painted as a loyalty. Both the faction and loyalty brushes are `<select>`s over that registry, with a blank option that erases; free text is no longer accepted. Loyalty coloring follows the faction's holdings: hexes it also owns take its color, hexes owned by someone else take a hue-shifted variant, and a faction with no territory anywhere stays gray.
 
@@ -110,7 +114,8 @@ Owned-hex tallies and the capital lookup are cached in `factionCounts` / `capita
 ## Features (editor)
 
 - Generate maps from 2×2 to 300×300 hexes (defaults 40×30).  
-- Faction Editor: name, state/non-state, ideology, color, optional flag, optional capital, description.  
+- Faction Editor: name, code, state/non-state, ideology, color, optional flag, optional capital, description.  
+- Faction-only import/export, separate from the map file: **Export** (in the editor opened on an existing faction) writes that one faction; **Import** (in the editor opened as *New Faction*) merges every faction in a file by `code` (Lorekeeper scenarios, `cartographer-factions` packs, or a full `hex-map.json`). Factions themselves still live in `map.json`.  
 - Shift+click select a hex; set a faction capital; per-hex custom fields (string / number / boolean).  
 - Background reference image: opacity, scale, offset, freeze-map edit mode.  
 - Export JSON (`hex-map.json`, meta version 8) and PNG of the current canvas.  
@@ -158,7 +163,7 @@ No install, build, or environment variables are required. Settings and autosave 
 {
   "meta": { "version": 8, "cols": 40, "rows": 30, "hexSize": 22, "exportedAt": "…" },
   "factions": [{
-    "name": "FactionName", "type": "state", "ideology": "…", "description": "…",
+    "name": "FactionName", "code": "F-0USA", "type": "state", "ideology": "…", "description": "…",
     "color": "#c9a24d", "flag": "data:image/png;base64,…", "capital": { "q": 0, "r": 0 },
     "hexCount": 42
   }],
@@ -168,5 +173,7 @@ No install, build, or environment variables are required. Settings and autosave 
   "hexes": [{ "q": 0, "r": 0, "terrain": "grassland", "elevation": "flat", "population": 0 }]
 }
 ```
+
+A faction-only file is the same `factions` array under a `{ "format": "cartographer-factions", "version": 1, "exportedAt": "…", "factions": [ … ] }` wrapper, so a whole `map.json` or a Lorekeeper scenario can be handed to the faction importer as-is. The importer also accepts a bare array or a single faction object. Matching `code` values update the existing passport; a name that already exists without a matching code is suffixed, and a clashing or missing code on a **new** faction is regenerated.
 
 Pixel `x`/`y` are recomputed on import via `axialToPixel`. `owners` duplicates each faction's color and capital so tooling written against the older export keeps working; `factions` is the authoritative list and is the only one that carries landless factions, types, flags and descriptions.

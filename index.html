@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Cartographer V0.7.0 -->
+<!-- Cartographer V0.8.0 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -94,7 +94,30 @@
           <button class="btn" id="newFactionBtn"><i data-lucide="plus"></i> New Faction</button>
           <button class="btn" id="editOwnerFactionBtn" disabled><i data-lucide="pencil"></i> Edit</button>
         </div>
-        <div class="hint">Painting a faction also writes matching loyalty on those hexes.</div>
+        <div class="hint">Painting a faction also writes matching loyalty and de facto control on those hexes. Territory is de jure ownership. Changing owner clears any administrative region on the hex.</div>
+      </section>
+
+      <!-- ADMINISTRATIVE REGION BRUSH -->
+      <section class="panel-section" data-tool="region">
+        <h2><i data-lucide="boxes"></i> Administrative Region Brush</h2>
+        <label>Faction</label>
+        <select id="regionFactionSelect"></select>
+        <label>Region</label>
+        <select id="regionSelect"></select>
+        <label>Name</label>
+        <input type="text" id="regionNameInput" placeholder="Region name">
+        <label>Type</label>
+        <input type="text" id="regionTypeInput" placeholder="e.g. Province, State, Autonomous Region">
+        <label>Governor (optional)</label>
+        <input type="text" id="regionGovernorInput" placeholder="Name or title">
+        <div class="btn-row">
+          <button class="btn" id="newRegionBtn"><i data-lucide="plus"></i> New Region</button>
+          <button class="btn" id="deleteRegionBtn" disabled><i data-lucide="trash-2"></i> Delete</button>
+        </div>
+        <div class="hint">
+          Regions group hexes inside a faction’s de jure territory. Occupation (de facto control) does not remove them.
+          Borders are drawn only between hexes of the same faction; a different faction uses the country border instead.
+        </div>
       </section>
 
       <!-- LOYALTY BRUSH -->
@@ -109,6 +132,20 @@
           Residents’ allegiance, chosen from the faction list. Hexes the faction also owns use its
           color, hexes owned by someone else use a shifted color, and a faction with no territory
           at all stays gray.
+        </div>
+      </section>
+
+      <!-- DE FACTO CONTROL BRUSH -->
+      <section class="panel-section" data-tool="controller">
+        <h2><i data-lucide="swords"></i> De Facto Brush</h2>
+        <div class="field-row">
+          <span class="brush-swatch" id="controllerFactionSwatch"></span>
+          <div><select id="controllerFactionSelect"></select></div>
+        </div>
+        <button class="btn" id="editControllerFactionBtn" disabled><i data-lucide="pencil"></i> Edit Faction</button>
+        <div class="hint">
+          Who actually holds the hex, chosen from the faction list. Shown as diagonal hatch, not a flat tint.
+          Hexes they also own (de jure) use their color; occupied hexes use a shifted color; landless factions stay gray.
         </div>
       </section>
 
@@ -128,10 +165,22 @@
         <div id="factionList" class="hint">No factions yet. Create one to start painting territory.</div>
       </section>
 
+      <!-- ADMINISTRATIVE REGIONS LIST -->
+      <section class="panel-section" id="regionsSection">
+        <h2><i data-lucide="boxes"></i> Administrative Regions</h2>
+        <div id="regionList" class="hint">No regions yet. Create one to start painting provinces.</div>
+      </section>
+
       <!-- LOYALTIES LIST -->
       <section class="panel-section" id="loyaltiesSection">
         <h2><i data-lucide="heart-handshake"></i> Loyalties</h2>
         <div id="loyaltyList" class="hint">No loyalties painted yet.</div>
+      </section>
+
+      <!-- DE FACTO LIST -->
+      <section class="panel-section" id="controllersSection">
+        <h2><i data-lucide="swords"></i> De Facto Control</h2>
+        <div id="controllerList" class="hint">No de facto control painted yet.</div>
       </section>
 
       <!-- CULTURES LIST -->
@@ -275,7 +324,7 @@
         </button>
         <div class="float-tab-body">
           <div class="radio-row" id="toolRadios"></div>
-          <div class="hint">Each tool writes only its own layer, except faction paint which also sets matching loyalty. Number keys switch tools.</div>
+          <div class="hint">Each tool writes only its own layer, except faction paint which also sets matching loyalty and de facto control (and clears regions when ownership changes). Number keys switch tools.</div>
         </div>
       </section>
       <section class="float-tab" id="layersTab">
@@ -288,8 +337,10 @@
           <div class="radio-row" id="viewModeRadios">
             <label><input type="checkbox" id="layerTerrain" checked> Terrain Base</label>
             <label><input type="checkbox" id="layerElevation" checked> Elevation</label>
-            <label><input type="checkbox" id="layerOwnership" checked> Ownership Borders & Tints</label>
+            <label><input type="checkbox" id="layerOwnership" checked> Ownership Borders & Tints (de jure)</label>
+            <label><input type="checkbox" id="layerRegions" checked> Administrative Regions</label>
             <label><input type="checkbox" id="layerLoyalty"> Loyalty</label>
+            <label><input type="checkbox" id="layerController"> De Facto Control</label>
             <label><input type="checkbox" id="layerCulture"> Culture</label>
             <label><input type="checkbox" id="layerRoutes" checked> Roads & Rivers</label>
             <label><input type="checkbox" id="layerPopulation"> Population Heatmap</label>
@@ -334,8 +385,13 @@
   <div class="modal modal-wide" role="dialog" aria-labelledby="factionModalTitle">
     <div class="faction-modal-head">
       <h2 id="factionModalTitle">Faction Editor</h2>
-      <button class="btn-icon-sm danger" id="factionDeleteBtn" title="Delete this faction"><i data-lucide="trash-2"></i></button>
+      <div class="faction-modal-head-actions">
+        <button class="btn-icon-sm" id="factionImportBtn" title="Import factions from a Cartographer or Lorekeeper JSON file" hidden><i data-lucide="upload"></i></button>
+        <button class="btn-icon-sm" id="factionExportBtn" title="Export this faction to a file" hidden><i data-lucide="download"></i></button>
+        <button class="btn-icon-sm danger" id="factionDeleteBtn" title="Delete this faction"><i data-lucide="trash-2"></i></button>
+      </div>
     </div>
+    <input type="file" id="factionImportFileInput" accept="application/json,.json" hidden>
 
     <div class="faction-identity">
       <div class="faction-flag">
@@ -349,7 +405,11 @@
         </div>
       </div>
       <div class="faction-identity-fields">
-        <input type="text" id="factionNameInput" placeholder="Faction Name">
+        <div class="faction-name-row">
+          <input type="text" id="factionNameInput" placeholder="Faction Name">
+          <input type="text" id="factionCodeInput" placeholder="CODE" maxlength="4" spellcheck="false"
+                 title="Faction code — 4 letters or numbers, written to files as F-XXXX">
+        </div>
         <select id="factionTypeSelect" title="Faction type"></select>
         <input type="text" id="factionIdeologyInput" placeholder="Ideology / Government Type">
       </div>
@@ -369,7 +429,7 @@
 
     <textarea id="factionDescInput" rows="5" placeholder="Faction description..."></textarea>
 
-    <div class="hint">Flag, capital and description are all optional. A faction with no territory still shows up in the loyalty brush, tinted gray.</div>
+    <div class="hint">The code is 4 letters or numbers and is written to files as <code>F-XXXX</code> for other tools to sync on. Flag, capital and description are all optional. A faction with no territory still shows up in the loyalty brush, tinted gray.</div>
 
     <div class="btn-row">
       <button class="btn" id="factionCancelBtn">Cancel</button>
@@ -409,7 +469,7 @@
     <label class="check-row"><input type="checkbox" id="settingsPrefConfirmCleanOcean" checked> Confirm before cleaning ocean tiles</label>
     <label class="check-row"><input type="checkbox" id="settingsPrefWarnUnload" checked> Warn before closing or refreshing tab</label>
     <label class="check-row"><input type="checkbox" id="settingsPrefPromptRestore" checked> Ask before restoring autosave on startup</label>
-    <label class="check-row"><input type="checkbox" id="settingsPrefOceanElevPop" checked> Use elevation/population/culture/loyalty tools on ocean tiles</label>
+    <label class="check-row"><input type="checkbox" id="settingsPrefOceanElevPop" checked> Use elevation/population/culture/loyalty/control tools on ocean tiles</label>
     <div class="hint" id="settingsConfigStatus">Settings are saved in this browser.</div>
     <div class="btn-row">
       <button class="btn btn-primary" id="settingsApplyBtn">Apply</button>
@@ -428,6 +488,6 @@
   </div>
 </div>
 
-<script src="script.js"></script>
+<script type="module" src="js/main.js"></script>
 </body>
 </html>
