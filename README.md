@@ -1,6 +1,6 @@
 # Cartographer
 
-**Cartographer** (v0.9.0) is a browser-based hex map editor for grand-strategy style worlds. You paint terrain, elevation, faction territory, loyalty, culture, and population onto an axial hex grid, draw roads and rivers, stamp city labels, and export the map as JSON or PNG.
+**Cartographer** (v0.9.1) is a browser-based hex map editor for grand-strategy style worlds. You paint terrain, elevation, faction territory, loyalty, culture, and population onto an axial hex grid, draw roads and rivers, stamp city labels, and export the map as JSON or PNG.
 
 The app is a single-page editor: a sidebar of tools and a full-viewport HTML Canvas. There is no backend.
 
@@ -107,11 +107,13 @@ Paths may join or cross at a **single** hex but must not run along each other (t
 
 ### Factions
 
-Factions are authored in the **Faction Editor** modal rather than typed into the brush, and live in a `Map` keyed by a stable `id` (`fac_<uuid>`). `name` and `code` are display/editable fields; renaming a faction never rewrites hex, region, building, or unit references. A record holds `id`, `name`, `color`, a 4-character `code`, `type` (`state` / `nonstate`), `ideology`, `description`, an optional `flag` (a data URL, re-encoded down to 256 px on upload) and an optional `capital`.
+Factions are authored in the **Faction Editor** modal rather than typed into the brush, and live in a `Map` keyed by **`F-XXXX`**. That id is the universal faction identity shared with Lorekeeper: the same `F-XXXX` is the same faction in both apps. `name` is a player-facing label only (for example `"Staria State"`). Import/export match on `F-XXXX` even when names disagree.
 
-The **code** is a human-readable interchange value for Lorekeeper and the UI. It is held bare in memory (`0USA`) and always written to a file with an `F-` prefix (`F-0USA`); `normalizeFactionCode` strips that prefix and any non-alphanumerics back off on the way in. Codes must be unique, and `suggestFactionCode` derives one from the name (padding and then walking a numeric tail) so the editor can fill the field while the user types. It is not the primary key.
+A record holds `id` (`F-XXXX`), `name`, `code` (always the same `F-XXXX`), `type` (`state`, `nonstate`, `corporate`, `rebel`, `religious`, `other`), `ideology`, `description`, `color`, an optional `flag` (a data URL, re-encoded down to 256 px on upload) and an optional `capital` (`{ q, r }`, `{ name }`, or both).
 
-**Lorekeeper** uses the same passport fields (`id` when present, name, code, type, ideology, description, color, flag, capital). Faction import matches on `id` first, then `code`, and updates those fields in place; lore (`mech`, `ai`, chronology) is ignored. A matching faction keeps the map capital if the incoming file only has a city name. New factions still get a unique name, a free code, and a new stable id unless the file already supplies an unused id. Lorekeeper type labels such as `Non-State Actor` map to `nonstate`.
+The editor shows `F-XXXX` in the identity field. Changing it rewrites hex, region, building, and unit references to the new id. `suggestFactionCode` still derives a free 4-character stem from the name for new factions. Older maps that used `fac_<uuid>` plus a 4-character `code` are ingested onto `F-XXXX` and their map refs are remapped.
+
+**Lorekeeper** uses the same basic faction object. Faction import matches on `F-XXXX` from `id` or `code` and updates those basic fields in place; lore and starting conditions are ignored. A matching faction keeps the map capital hex if the incoming file only has a city name. Names are never used to decide that two factions are the same.
 
 Nothing prunes the registry, so a faction may hold **zero territory** and still own buildings/units or be painted as a loyalty. Brushes are `<select>`s over that registry, with a blank option that erases; free text is no longer accepted. Loyalty coloring follows the faction's holdings: hexes it also owns take its color, hexes owned by someone else take a hue-shifted variant, and a faction with no territory anywhere stays gray.
 
@@ -120,14 +122,14 @@ Owned-hex tallies and the capital lookup are cached in `factionCounts` / `capita
 ## Features (editor)
 
 - Generate maps from 2×2 to 300×300 hexes (defaults 40×30).  
-- Faction Editor: name, code, state/non-state, ideology, color, optional flag, optional capital, description.  
-- Faction-only import/export, separate from the map file: **Export** (in the editor opened on an existing faction) writes that one faction; **Import** (in the editor opened as *New Faction*) merges every faction in a file by `id` then `code` (Lorekeeper scenarios, `cartographer-factions` packs, or a full `hex-map.json`). Factions themselves still live in `map.json`.  
+- Faction Editor: name, F-XXXX identity, type, ideology, color, optional flag, optional capital, description.  
+- Faction-only import/export, separate from the map file: **Export** (in the editor opened on an existing faction) writes that one faction; **Import** (in the editor opened as *New Faction*) merges every faction in a file by `F-XXXX` (Lorekeeper scenarios, `cartographer-factions` packs, or a full `hex-map.json`). Factions themselves still live in `map.json`.  
 - Shift+click select a hex; set a faction capital; per-hex custom fields (string / number / boolean).  
 - Background reference image: opacity, scale, offset, freeze-map edit mode.  
-- Export JSON (`hex-map.json`, meta version 10, app 0.9.0) and PNG of the current canvas.  
+- Export JSON (`hex-map.json`, meta version 11, app 0.9.1) and PNG of the current canvas.  
 - Import JSON; settings and optional timed autosave in this browser.
 
-Imports read the `factions` array. Hexes, regions, buildings, and units reference factions by id (`ownerFactionId`, `loyaltyFactionId`, `controllerFactionId`, `factionId`). Duplicate faction ids in a file are skipped; missing ids are generated once on import and then preserved.
+Imports read the `factions` array. Hexes, regions, buildings, and units reference factions by `F-XXXX` (`ownerFactionId`, `loyaltyFactionId`, `controllerFactionId`, `factionId`). Duplicate faction ids in a file collapse onto the first `F-XXXX`; missing identities are generated once on import and then preserved.
 
 ## Controls
 
@@ -167,24 +169,24 @@ No install, build, or environment variables are required. Settings and autosave 
 
 ```json
 {
-  "meta": { "version": 10, "appVersion": "0.9.0", "cols": 40, "rows": 30, "hexSize": 22, "exportedAt": "…" },
+  "meta": { "version": 11, "appVersion": "0.9.1", "cols": 40, "rows": 30, "hexSize": 22, "exportedAt": "…" },
   "factions": [{
-    "id": "fac-…", "name": "FactionName", "code": "F-0USA", "type": "state", "ideology": "…", "description": "…",
-    "color": "#c9a24d", "flag": "data:image/png;base64,…", "capital": { "q": 0, "r": 0 },
+    "id": "F-STAR", "name": "Staria State", "code": "F-STAR", "type": "state", "ideology": "…", "description": "…",
+    "color": "#c9a24d", "flag": "data:image/png;base64,…", "capital": { "q": 0, "r": 0, "name": "Magnesia" },
     "hexCount": 42
   }],
   "cultures": { "CultureName": { "color": "#9c6eb9" } },
-  "regions": { "nextId": 2, "list": [{ "id": 1, "name": "Heartland", "type": "Province", "governor": "", "factionId": "fac-…" }] },
+    "regions": { "nextId": 2, "list": [{ "id": 1, "name": "Heartland", "type": "Province", "governor": "", "factionId": "F-STAR" }] },
   "routes": [{ "id": 1, "name": "…", "style": "dirt", "waypoints": [{ "q": 0, "r": 0 }] }],
   "hexes": [{
     "q": 0, "r": 0, "terrain": "grassland", "elevation": "flat", "population": 0,
-    "ownerFactionId": "fac-…", "loyaltyFactionId": "fac-…", "controllerFactionId": "fac-…", "region": 1,
-    "buildings": [{ "id": "bld_…", "building_id": "outpost", "name": "Outpost", "ownerFactionId": "fac-…", "operational": true }],
-    "units": [{ "id": "unit_…", "name": "1st Division", "ownerFactionId": "fac-…", "personnel": 1000 }]
+    "ownerFactionId": "F-STAR", "loyaltyFactionId": "F-STAR", "controllerFactionId": "F-STAR", "region": 1,
+    "buildings": [{ "id": "bld_…", "building_id": "outpost", "name": "Outpost", "ownerFactionId": "F-STAR", "operational": true }],
+    "units": [{ "id": "unit_…", "name": "1st Division", "ownerFactionId": "F-STAR", "personnel": 1000 }]
   }]
 }
 ```
 
-A faction-only file is the same `factions` array under a `{ "format": "cartographer-factions", "version": 2, "exportedAt": "…", "factions": [ … ] }` wrapper, so a whole `map.json` or a Lorekeeper scenario can be handed to the faction importer as-is. The importer also accepts a bare array or a single faction object. Matching `id` or `code` values update the existing passport without changing the map id; a name that already exists on a **new** faction is suffixed, and a clashing or missing code on a **new** faction is regenerated.
+A faction-only file is the same `factions` array under a `{ "format": "cartographer-factions", "version": 2, "exportedAt": "…", "factions": [ … ] }` wrapper, so a whole `map.json` or a Lorekeeper scenario can be handed to the faction importer as-is. The importer also accepts a bare array or a single faction object. Matching `F-XXXX` values update the existing basic faction in place; a name that already exists on a **new** faction is suffixed. Names are not used to identify factions.
 
 Pixel `x`/`y` are recomputed on import via `axialToPixel`. `factions` is the authoritative list and is the only registry that carries landless factions, types, flags and descriptions. Route, region, building, and unit ids are preserved across export/import.

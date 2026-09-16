@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Cartographer V0.9.0 -->
+<!-- Cartographer V0.9.1 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -19,6 +19,7 @@
       <button type="button" class="topbar-tab" id="topMapBtn" data-drawer="map" aria-expanded="false">Map</button>
       <button type="button" class="topbar-tab" id="topFactionsBtn" data-drawer="factions" aria-expanded="false">Factions</button>
       <button type="button" class="topbar-tab" id="topRoutesBtn" data-drawer="routes" aria-expanded="false">Routes</button>
+      <button type="button" class="topbar-tab" id="topStatisticsBtn" data-drawer="statistics" aria-expanded="false">Statistics</button>
     </nav>
     <div class="topbar-history">
       <button class="btn topbar-btn" id="undoBtn" disabled title="Undo (Ctrl+Z)"><i data-lucide="undo-2"></i> Undo</button>
@@ -136,6 +137,19 @@
         <div class="hint">Select a route to edit it on the map. Drawing, editing and erasing still use the Road / River tool options on the left.</div>
         <div id="routeList" class="hint">No roads or rivers drawn yet.</div>
       </section>
+    </div>
+
+    <!-- STATISTICS DRAWER -->
+    <div class="drawer-panel" id="drawer-statistics" hidden>
+      <div class="stats-layout">
+        <aside class="stats-nav">
+          <h2><i data-lucide="bar-chart-3"></i> Statistics</h2>
+          <div id="statsNavList"></div>
+        </aside>
+        <div class="stats-body" id="statsBody">
+          <div class="hint">Open this tab to see live totals from the current map.</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -475,8 +489,8 @@
       <div class="faction-identity-fields">
         <div class="faction-name-row">
           <input type="text" id="factionNameInput" placeholder="Faction Name">
-          <input type="text" id="factionCodeInput" placeholder="CODE" maxlength="4" spellcheck="false"
-                 title="Faction code — 4 letters or numbers, written to files as F-XXXX">
+          <input type="text" id="factionCodeInput" placeholder="F-XXXX" maxlength="6" spellcheck="false"
+                 title="F-XXXX is the shared faction identity with Lorekeeper">
         </div>
         <select id="factionTypeSelect" title="Faction type"></select>
         <input type="text" id="factionIdeologyInput" placeholder="Ideology / Government Type">
@@ -497,7 +511,7 @@
 
     <textarea id="factionDescInput" rows="5" placeholder="Faction description..."></textarea>
 
-    <div class="hint">The code is 4 letters or numbers and is written to files as <code>F-XXXX</code> for other tools to sync on. Flag, capital and description are all optional. A faction with no territory still shows up in the loyalty brush, tinted gray.</div>
+    <div class="hint"><code>F-XXXX</code> is the faction identity shared with Lorekeeper. The name is only a label — the same <code>F-XXXX</code> is the same faction even if names disagree. Flag, capital and description are optional. A faction with no territory still shows up in the loyalty brush, tinted gray.</div>
 
     <div class="btn-row">
       <button class="btn" id="factionCancelBtn">Cancel</button>

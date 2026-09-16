@@ -21,7 +21,9 @@ import {
   ensureCulture, cultureColor, peekCultureColor, factionColor,
   factionHexCount, getFactionCounts, sortedFactions, getFaction, factionName,
   uniqueFactionName, suggestFactionCode, normalizeFactionCode, formatFactionCode,
-  isFactionCodeFree, isFactionNameFree, cloneCapital, findFactionByCode, retargetFactionName,
+  isFactionCodeFree, isFactionNameFree, cloneCapital,
+  retargetFactionId, basicFactionEntry, looksLikeFactionId, restoreFactions,
+  applyFactionIdRemap, pruneUnknownFactionRefs,
   getFactionCapitalHex, factionsWithCapitalAt, setFactionCapital, stripRegionsOfFaction, stripFactionEntityRefs,
   getRegion, hexRegion, createRegion, deleteRegionById, regionsForFaction, getRegionCounts, restoreRegions,
   cloneCultureRecord,
@@ -32,7 +34,7 @@ import {
   getBuildingType, renameBuildingOnHex, deleteBuildingOnHex, toggleBuildingOperational,
   formatBuildingHoverLine, formatUnitHoverLine, buildingOwnerColor,
   stampUnitOnHex, renameUnitOnHex, deleteUnitOnHex,
-  formatPop
+  formatPop, computeMapStatistics
 } from './domain.js';
 
 function getMousePos(e){
@@ -469,12 +471,215 @@ function setTopDrawer(id){
     btn.classList.toggle('active', on);
     btn.setAttribute('aria-expanded', on ? 'true' : 'false');
   });
+  if (id === 'statistics') refreshStatistics();
   if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 document.querySelectorAll('.topbar-tab[data-drawer]').forEach(btn => {
   btn.addEventListener('click', () => setTopDrawer(btn.dataset.drawer));
 });
+
+let statsScopeId = null;
+
+function formatStatCount(n){
+  return Math.round(Number(n) || 0).toLocaleString('en-US');
+}
+
+function formatStatPct(share){
+  if (!Number.isFinite(share) || share < 0) return '—';
+  return `${(share * 100).toFixed(1)}%`;
+}
+
+function formatStatPerHex(n){
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  return Math.round(n).toLocaleString('en-US');
+}
+
+function statsEl(tag, className, text){
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+function appendStatRow(parent, label, value){
+  const row = statsEl('div', 'stats-row');
+  row.appendChild(statsEl('span', 'stats-label', label));
+  row.appendChild(statsEl('span', 'stats-value', value));
+  parent.appendChild(row);
+}
+
+function appendDistRow(parent, name, pop, share, swatch){
+  const row = statsEl('div', swatch ? 'stats-dist-row' : 'stats-dist-row no-swatch');
+  if (swatch) row.appendChild(swatch);
+  row.appendChild(statsEl('span', 'stats-dist-name', name));
+  row.appendChild(statsEl('span', 'stats-dist-pop', formatStatCount(pop)));
+  row.appendChild(statsEl('span', 'stats-dist-share', formatStatPct(share)));
+  parent.appendChild(row);
+}
+
+function cultureSwatch(name){
+  const swatch = statsEl('span', 'stats-swatch');
+  swatch.style.background = cultureColor(name);
+  return swatch;
+}
+
+function appendEmptyState(parent, message){
+  parent.appendChild(statsEl('div', 'hint', message));
+}
+
+function appendCultureBlock(parent, cultures, emptyMessage){
+  const section = statsEl('section', 'stats-section');
+  section.appendChild(statsEl('h3', 'subhead', 'Cultures'));
+  if (!cultures.present){
+    appendEmptyState(section, emptyMessage);
+    parent.appendChild(section);
+    return;
+  }
+  if (cultures.largest){
+    appendStatRow(section, 'Largest culture', cultures.largest.name);
+    appendStatRow(section, 'Largest culture population', `${formatStatCount(cultures.largest.pop)}   ${formatStatPct(cultures.largest.share)}`);
+  }
+  appendStatRow(section, 'Cultures present', formatStatCount(cultures.present));
+  if (cultures.diversity) appendStatRow(section, 'Diversity', cultures.diversity);
+  if (!cultures.list.length){
+    appendEmptyState(section, 'Cultures are painted, but they have no population.');
+  } else {
+    for (const row of cultures.list){
+      appendDistRow(section, row.key, row.pop, row.share, cultureSwatch(row.key));
+    }
+  }
+  if (cultures.unpaintedPop > 0){
+    const note = statsEl('p', 'stats-note');
+    note.textContent = `${formatStatCount(cultures.unpaintedPop)} people live on hexes with no culture painted.`;
+    section.appendChild(note);
+  }
+  parent.appendChild(section);
+}
+
+function renderWorldStats(body, world){
+  body.appendChild(statsEl('h2', 'stats-title', 'World'));
+  const overview = statsEl('section', 'stats-section');
+  overview.appendChild(statsEl('h3', 'subhead', 'Overview'));
+  appendStatRow(overview, 'Population', formatStatCount(world.population));
+  appendStatRow(overview, 'Land hexes', formatStatCount(world.landHexes));
+  appendStatRow(overview, 'Inhabited hexes', formatStatCount(world.inhabitedHexes));
+  appendStatRow(overview, 'Total buildings', formatStatCount(world.buildings));
+  appendStatRow(overview, 'Total units', formatStatCount(world.units));
+  body.appendChild(overview);
+
+  appendCultureBlock(body, world.cultures, 'No cultures painted yet.');
+
+  const factions = statsEl('section', 'stats-section');
+  factions.appendChild(statsEl('h3', 'subhead', 'Factions'));
+  if (!world.factions.length){
+    appendEmptyState(factions, 'No factions yet.');
+  } else {
+    for (const row of world.factions){
+      appendDistRow(factions, row.name, row.pop, row.share, factionBadge(row.id));
+    }
+  }
+  body.appendChild(factions);
+}
+
+function renderFactionStats(body, rec){
+  body.appendChild(statsEl('h2', 'stats-title', rec.name));
+  const overview = statsEl('section', 'stats-section');
+  overview.appendChild(statsEl('h3', 'subhead', 'Overview'));
+  appendStatRow(overview, 'Population', formatStatCount(rec.population));
+  appendStatRow(overview, 'World population share', formatStatPct(rec.worldShare));
+  appendStatRow(overview, 'Territory', `${formatStatCount(rec.territoryHexes)} hexes`);
+  appendStatRow(overview, 'Controlled territory', `${formatStatCount(rec.controlledTerritoryHexes)} hexes`);
+  appendStatRow(overview, 'Administrative regions', formatStatCount(rec.administrativeRegions));
+  appendStatRow(overview, 'Population / hex', formatStatPerHex(rec.popPerHex));
+  appendStatRow(overview, 'Total Buildings', formatStatCount(rec.buildings));
+  appendStatRow(overview, 'Total Units', formatStatCount(rec.units));
+  body.appendChild(overview);
+
+  appendCultureBlock(body, rec.cultures, 'No cultures painted in this territory.');
+
+  const cohesion = statsEl('section', 'stats-section');
+  cohesion.appendChild(statsEl('h3', 'subhead', 'Political Cohesion'));
+  const paintedLoyalty = rec.cohesion.loyalOwn > 0 || rec.cohesion.loyalOther > 0;
+  if (!paintedLoyalty && rec.cohesion.none <= 0 && rec.population <= 0){
+    appendEmptyState(cohesion, 'No loyalty painted in this territory.');
+  } else if (!paintedLoyalty){
+    appendEmptyState(cohesion, 'No loyalty painted in this territory.');
+  } else {
+    appendDistRow(cohesion, 'Loyal to selected faction', rec.cohesion.loyalOwn, rec.cohesion.loyalOwnShare);
+    appendDistRow(cohesion, 'Loyal to other factions', rec.cohesion.loyalOther, rec.cohesion.loyalOtherShare);
+    if (rec.cohesion.none > 0){
+      appendDistRow(cohesion, 'No loyalty painted', rec.cohesion.none, rec.cohesion.noneShare);
+    }
+  }
+  body.appendChild(cohesion);
+
+  const gap = statsEl('section', 'stats-section');
+  gap.appendChild(statsEl('h3', 'subhead', 'Control Gap'));
+  if (rec.territoryHexes <= 0 && rec.foreignControlHexes <= 0){
+    appendEmptyState(gap, 'This faction has no de jure territory.');
+  } else {
+    appendStatRow(gap, 'Own de facto control of de jure territory', formatStatPct(rec.ownControlShare));
+    appendStatRow(gap, 'Population in own territory under foreign control', formatStatCount(rec.occupiedPop));
+    appendStatRow(gap, 'Foreign territory under de facto control', `${formatStatCount(rec.foreignControlHexes)} hexes`);
+    appendStatRow(gap, 'Foreign population under de facto control', formatStatCount(rec.foreignControlPop));
+  }
+  body.appendChild(gap);
+
+  const regions = statsEl('section', 'stats-section');
+  regions.appendChild(statsEl('h3', 'subhead', 'Regions'));
+  if (!rec.regions.length){
+    appendEmptyState(regions, 'No administrative regions painted in this territory.');
+  } else {
+    for (const row of rec.regions){
+      appendDistRow(regions, row.name, row.pop, row.share);
+    }
+  }
+  body.appendChild(regions);
+}
+
+export function refreshStatistics(){
+  const panel = document.getElementById('drawer-statistics');
+  if (!panel || panel.hidden) return;
+  const nav = document.getElementById('statsNavList');
+  const body = document.getElementById('statsBody');
+  if (!nav || !body) return;
+
+  const stats = computeMapStatistics();
+  if (statsScopeId && !stats.factions[statsScopeId]) statsScopeId = null;
+
+  nav.innerHTML = '';
+  const worldBtn = statsEl('button', 'stats-nav-row' + (statsScopeId ? '' : ' selected'));
+  worldBtn.type = 'button';
+  const globe = statsEl('span', 'stats-nav-globe');
+  globe.innerHTML = '<i data-lucide="globe"></i>';
+  worldBtn.appendChild(globe);
+  worldBtn.appendChild(statsEl('span', 'stats-nav-name', 'World'));
+  worldBtn.appendChild(statsEl('span', 'stats-nav-pop', formatStatCount(stats.world.population)));
+  worldBtn.addEventListener('click', () => {
+    statsScopeId = null;
+    refreshStatistics();
+  });
+  nav.appendChild(worldBtn);
+
+  for (const row of stats.world.factions){
+    const btn = statsEl('button', 'stats-nav-row' + (statsScopeId === row.id ? ' selected' : ''));
+    btn.type = 'button';
+    btn.appendChild(factionBadge(row.id));
+    btn.appendChild(statsEl('span', 'stats-nav-name', row.name));
+    btn.appendChild(statsEl('span', 'stats-nav-pop', formatStatCount(row.pop)));
+    btn.addEventListener('click', () => {
+      statsScopeId = row.id;
+      refreshStatistics();
+    });
+    nav.appendChild(btn);
+  }
+
+  body.innerHTML = '';
+  if (!statsScopeId) renderWorldStats(body, stats.world);
+  else renderFactionStats(body, stats.factions[statsScopeId]);
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+}
 
 (function initDockSplit(){
   const split = document.getElementById('dockSplit');
@@ -591,7 +796,7 @@ function fillFactionSelect(selectEl, selected, blankLabel){
   for (const rec of sortedFactions()){
     const opt = document.createElement('option');
     opt.value = rec.id;
-    opt.textContent = `${rec.name} — ${FACTION_TYPE_LABELS[rec.type]}`;
+    opt.textContent = `${rec.name} — ${FACTION_TYPE_LABELS[rec.type] || rec.type}`;
     selectEl.appendChild(opt);
   }
   selectEl.value = getFaction(selected) ? selected : '';
@@ -907,7 +1112,7 @@ export function refreshFactionList(){
     const nameEl = document.createElement('span');
     nameEl.className = 'country-name';
     nameEl.textContent = rec.capital ? `${rec.name} 👑` : rec.name;
-    nameEl.title = `${FACTION_TYPE_LABELS[rec.type]}${rec.ideology ? ' · ' + rec.ideology : ''} — click to paint with this faction`;
+    nameEl.title = `${FACTION_TYPE_LABELS[rec.type] || rec.type || 'Faction'}${rec.ideology ? ' · ' + rec.ideology : ''} — click to paint with this faction`;
     nameEl.addEventListener('click', () => {
       state.brush.ownerFactionId = rec.id;
       syncFactionBrushInputs();
@@ -1356,11 +1561,14 @@ function refreshFactionUi(){
   render();
 }
 
-/* Writes the editor draft back into the map. Names and codes are display
-   fields; hex, region, building, and unit references stay on the faction id. */
+/* Writes the editor draft back into the map. Name is a label; F-XXXX is identity.
+   Hex, region, building, and unit references follow that id if it changes. */
 function saveFaction(originalId, draft){
   beginAction();
-  const rec = makeFaction({ ...draft, id: originalId || draft.id });
+  const rec = makeFaction({ ...draft, id: draft.id, code: draft.id }, originalId);
+  if (originalId && originalId !== rec.id){
+    retargetFactionId(originalId, rec.id);
+  }
   state.factions.set(rec.id, rec);
   invalidateFactionCache();
   commitAction();
@@ -1484,16 +1692,25 @@ function syncFactionFlagPreview(){
 
 function syncFactionCapitalLabel(){
   const cap = state.factionDraft ? state.factionDraft.capital : null;
-  factionCapitalLabelEl.textContent = cap ? `Capital at ${cap.q}, ${cap.r}` : 'No capital set';
-  factionCapitalLabelEl.classList.toggle('is-empty', !cap);
-  factionCapitalClearBtn.disabled = !cap;
+  if (!cap){
+    factionCapitalLabelEl.textContent = 'No capital set';
+    factionCapitalLabelEl.classList.add('is-empty');
+    factionCapitalClearBtn.disabled = true;
+    return;
+  }
+  const parts = [];
+  if (cap.name) parts.push(cap.name);
+  if (Number.isFinite(cap.q) && Number.isFinite(cap.r)) parts.push(`${cap.q}, ${cap.r}`);
+  factionCapitalLabelEl.textContent = parts.length ? `Capital: ${parts.join(' · ')}` : 'Capital set';
+  factionCapitalLabelEl.classList.remove('is-empty');
+  factionCapitalClearBtn.disabled = false;
 }
 
 function syncFactionEditorFields(){
   if (!state.factionDraft) return;
   factionNameInputEl.value = state.factionDraft.name;
-  factionCodeInputEl.value = state.factionDraft.code;
-  factionTypeSelectEl.value = state.factionDraft.type;
+  factionCodeInputEl.value = state.factionDraft.id;
+  factionTypeSelectEl.value = FACTION_TYPE_LABELS[state.factionDraft.type] ? state.factionDraft.type : 'state';
   factionIdeologyInputEl.value = state.factionDraft.ideology;
   factionColorInputEl.value = state.factionDraft.color;
   factionDescInputEl.value = state.factionDraft.description;
@@ -1506,12 +1723,11 @@ function openFactionEditor(id){
   state.factionDraftOriginalId = rec ? rec.id : null;
   const draftName = rec ? rec.name : uniqueFactionName('New Faction');
   const base = rec || makeFaction({ name: draftName });
-  /* A code the user has not typed yet keeps following the name field. */
-  state.factionCodeDirty = !!(rec && rec.code);
+  state.factionCodeDirty = !!rec;
   state.factionDraft = {
     id: rec ? rec.id : base.id,
     name: draftName,
-    code: base.code || suggestFactionCode(draftName, state.factionDraftOriginalId),
+    code: rec ? rec.id : base.id,
     color: base.color,
     type: base.type,
     ideology: base.ideology,
@@ -1545,7 +1761,13 @@ function setCapitalPickMode(active){
 }
 
 function finishCapitalPick(hex){
-  if (state.factionDraft) state.factionDraft.capital = hex ? { q: hex.q, r: hex.r } : state.factionDraft.capital;
+  if (state.factionDraft){
+    const prev = state.factionDraft.capital;
+    const name = prev && prev.name ? prev.name : '';
+    state.factionDraft.capital = hex
+      ? { q: hex.q, r: hex.r, ...(name ? { name } : {}) }
+      : state.factionDraft.capital;
+  }
   setCapitalPickMode(false);
   syncFactionCapitalLabel();
 }
@@ -1566,17 +1788,19 @@ function applyFactionForm(){
   }
   const code = normalizeFactionCode(factionCodeInputEl.value);
   if (code.length !== FACTION_CODE_LEN){
-    alert('A faction code is exactly 4 letters or numbers.');
+    alert('Faction identity must be F-XXXX (exactly 4 letters or numbers).');
     factionCodeInputEl.focus();
     return false;
   }
   if (!isFactionCodeFree(code, state.factionDraftOriginalId)){
-    alert(`The code ${formatFactionCode(code)} already belongs to another faction.`);
+    alert(`The identity ${formatFactionCode(code)} already belongs to another faction.`);
     factionCodeInputEl.focus();
     return false;
   }
+  const id = formatFactionCode(code);
   state.factionDraft.name = name;
-  state.factionDraft.code = code;
+  state.factionDraft.id = id;
+  state.factionDraft.code = id;
   state.factionDraft.type = factionTypeSelectEl.value;
   state.factionDraft.ideology = factionIdeologyInputEl.value.trim();
   state.factionDraft.color = factionColorInputEl.value;
@@ -1604,12 +1828,16 @@ function commitFactionEditor(){
 
 factionNameInputEl.addEventListener('input', e => {
   if (!state.factionDraft || state.factionCodeDirty) return;
-  factionCodeInputEl.value = suggestFactionCode(e.target.value, state.factionDraftOriginalId);
+  const id = formatFactionCode(suggestFactionCode(e.target.value, state.factionDraftOriginalId));
+  factionCodeInputEl.value = id;
+  state.factionDraft.id = id;
+  state.factionDraft.code = id;
 });
 
 factionCodeInputEl.addEventListener('input', e => {
   state.factionCodeDirty = true;
-  e.target.value = normalizeFactionCode(e.target.value);
+  const stem = normalizeFactionCode(e.target.value);
+  e.target.value = stem ? formatFactionCode(stem) : 'F-';
 });
 
 factionColorInputEl.addEventListener('input', e => {
@@ -1657,17 +1885,7 @@ factionDeleteBtn.addEventListener('click', () => {
    file shape matches the `factions` array of a map export, so a map.json or a
    Lorekeeper scenario (which also has `factions`) can be fed into the importer. */
 function factionFileEntry(rec){
-  return {
-    id: rec.id,
-    name: rec.name,
-    code: formatFactionCode(rec.code),
-    type: rec.type,
-    ideology: rec.ideology,
-    description: rec.description,
-    color: rec.color,
-    flag: rec.flag,
-    capital: cloneCapital(rec.capital)
-  };
+  return basicFactionEntry(rec);
 }
 
 function downloadJson(data, filename){
@@ -1685,6 +1903,14 @@ function downloadJson(data, filename){
 function factionEntriesFrom(data){
   if (Array.isArray(data)) return data;
   if (data && typeof data === 'object'){
+    if (Array.isArray(data.factions) && data.factions.length) return data.factions;
+    if (data.owners && typeof data.owners === 'object' && !Array.isArray(data.owners)){
+      return Object.entries(data.owners).map(([name, raw]) => {
+        if (typeof raw === 'string') return { name, color: raw };
+        if (raw && typeof raw === 'object') return { name, ...raw };
+        return { name };
+      });
+    }
     if (Array.isArray(data.factions)) return data.factions;
     if (data.faction) return [data.faction];
     if (typeof data.name === 'string') return [data];
@@ -1695,30 +1921,29 @@ function factionEntriesFrom(data){
 function mergeImportedFaction(raw){
   if (!raw || typeof raw !== 'object') return null;
   const wanted = typeof raw.name === 'string' ? raw.name.trim() : '';
-  const code = normalizeFactionCode(raw.code);
-  const incomingId = typeof raw.id === 'string' ? raw.id.trim() : '';
-  let existing = incomingId ? getFaction(incomingId) : null;
-  if (!existing && code.length === FACTION_CODE_LEN) existing = findFactionByCode(code);
+  const idFromField = looksLikeFactionId(raw.id) ? formatFactionCode(raw.id) : '';
+  const idFromCode = formatFactionCode(raw.code);
+  const existing = (idFromField && getFaction(idFromField)) || (idFromCode && getFaction(idFromCode)) || null;
 
   if (existing){
     let destName = wanted || existing.name;
-    if (!isFactionNameFree(destName, existing.id)) destName = uniqueFactionName(destName, existing.id);
-    if (destName !== existing.name) retargetFactionName(existing.id, destName);
-    const rec = makeFaction({ ...raw, id: existing.id, name: destName, code: code || existing.code });
-    rec.code = code.length === FACTION_CODE_LEN ? code : existing.code;
-    if (!rec.capital && existing.capital) rec.capital = cloneCapital(existing.capital);
+    if (destName && !isFactionNameFree(destName, existing.id)) destName = uniqueFactionName(destName, existing.id);
+    const rec = makeFaction({ ...raw, id: existing.id, name: destName }, existing.id);
+    const incomingCap = cloneCapital(raw.capital);
+    if (!incomingCap) rec.capital = cloneCapital(existing.capital);
+    else if (!Number.isFinite(Number(incomingCap.q)) && existing.capital && Number.isFinite(Number(existing.capital.q))){
+      rec.capital = cloneCapital({ ...existing.capital, ...incomingCap });
+    }
     if (!rec.flag && existing.flag) rec.flag = existing.flag;
     state.factions.set(existing.id, rec);
     return { kind: 'updated', name: rec.name };
   }
 
-  if (!wanted) return null;
-  const name = uniqueFactionName(wanted);
-  const rec = makeFaction({ ...raw, id: (incomingId && !getFaction(incomingId)) ? incomingId : undefined, name });
-  rec.name = name;
-  if (rec.code.length !== FACTION_CODE_LEN || !isFactionCodeFree(rec.code, rec.id)) rec.code = suggestFactionCode(name, rec.id);
+  if (!wanted && !idFromField && !idFromCode) return null;
+  const rec = makeFaction(raw);
+  if (!isFactionNameFree(rec.name, rec.id)) rec.name = uniqueFactionName(rec.name, rec.id);
   state.factions.set(rec.id, rec);
-  return { kind: 'added', name };
+  return { kind: 'added', name: rec.name };
 }
 
 function importFactionsFile(file){
@@ -1770,7 +1995,7 @@ factionExportBtn.addEventListener('click', () => {
     version: 2,
     exportedAt: new Date().toISOString(),
     factions: [factionFileEntry(state.factionDraft)]
-  }, `${formatFactionCode(state.factionDraft.code)}.json`);
+  }, `${state.factionDraft.id}.json`);
 });
 
 factionImportBtn.addEventListener('click', () => factionImportFileEl.click());
@@ -1904,7 +2129,7 @@ function syncBuildingBrushInputs(){
   for (const rec of sortedFactions()){
     const opt = document.createElement('option');
     opt.value = rec.id;
-    opt.textContent = `${rec.name} (${formatFactionCode(rec.code)})`;
+    opt.textContent = `${rec.name} (${rec.id})`;
     buildingFactionSelectEl.appendChild(opt);
     if (rec.id === prev) found = true;
   }
@@ -1979,7 +2204,7 @@ function syncUnitBrushInputs(){
   for (const rec of sortedFactions()){
     const opt = document.createElement('option');
     opt.value = rec.id;
-    opt.textContent = `${rec.name} (${formatFactionCode(rec.code)})`;
+    opt.textContent = `${rec.name} (${rec.id})`;
     unitFactionSelectEl.appendChild(opt);
     if (rec.id === prev) found = true;
   }
@@ -2439,6 +2664,7 @@ document.getElementById('newMapBtn').addEventListener('click', () => {
   refreshCultureList();
   refreshRegionList();
   refreshSelectedHexPanel();
+  refreshStatistics();
 });
 
 document.getElementById('centerViewBtn').addEventListener('click', () => {
@@ -2567,6 +2793,7 @@ function refreshAllEditorUi(){
   refreshRegionList();
   refreshSelectedHexPanel();
   refreshInteractionUI();
+  refreshStatistics();
   syncFactionBrushInputs();
   syncCultureColorInput();
 }
@@ -2630,28 +2857,19 @@ function importMap(file){
       restoreRegions({ nextId: 1, list: [] });
       state.pathDraft = null;
 
-      // Factions must exist before hexes and regions reference them by id.
-      if (Array.isArray(data.factions)){
-        data.factions.forEach(raw => {
-          const rec = parseFactionEntry(raw);
-          if (!rec || !rec.id || state.factions.has(rec.id)) return;
-          if (!isFactionNameFree(rec.name, rec.id)) rec.name = uniqueFactionName(rec.name, rec.id);
-          state.factions.set(rec.id, rec);
-        });
+      const remap = restoreFactions(Array.isArray(data.factions) ? data.factions : []);
+      for (const rec of state.factions.values()){
+        if (!isFactionNameFree(rec.name, rec.id)) rec.name = uniqueFactionName(rec.name, rec.id);
       }
 
-      restoreRegions(data.regions || { nextId: 1, list: [] });
+      restoreRegions(data.regions || { nextId: 1, list: [] }, remap);
 
       data.hexes.forEach(h => {
         if (typeof h.q !== 'number' || typeof h.r !== 'number') return;
         const coords = axialToPixel(h.q, h.r, HEX_SIZE);
-        const ownerFactionId = getFaction(h.ownerFactionId) ? h.ownerFactionId : null;
-        const loyaltyFactionId = getFaction(h.loyaltyFactionId) ? h.loyaltyFactionId : null;
-        const controllerFactionId = getFaction(h.controllerFactionId) ? h.controllerFactionId : null;
         const culture = h.culture || null;
         const regionId = Number(h.region);
         const regionRec = Number.isFinite(regionId) ? getRegion(regionId) : null;
-        const region = (regionRec && ownerFactionId && ownerFactionId === regionRec.factionId) ? regionRec.id : null;
         const legacyTerrain = LEGACY_TERRAIN_IDS[h.terrain] || h.terrain;
         const terrain = state.TERRAIN_COLORS[legacyTerrain] ? legacyTerrain : 'ocean';
         const elevation = (h.elevation === 'hills' || h.elevation === 'mountains') ? h.elevation : 'flat';
@@ -2663,10 +2881,10 @@ function importMap(file){
           terrain,
           elevation,
           population: Number(h.population) || 0,
-          ownerFactionId,
-          loyaltyFactionId,
-          controllerFactionId,
-          region,
+          ownerFactionId: typeof h.ownerFactionId === 'string' ? h.ownerFactionId : null,
+          loyaltyFactionId: typeof h.loyaltyFactionId === 'string' ? h.loyaltyFactionId : null,
+          controllerFactionId: typeof h.controllerFactionId === 'string' ? h.controllerFactionId : null,
+          region: regionRec ? regionRec.id : null,
           culture,
           cityName: h.cityName || null,
           customData: sanitizeCustomData(h.customData),
@@ -2675,6 +2893,13 @@ function importMap(file){
         });
         if (culture) ensureCulture(culture);
       });
+
+      applyFactionIdRemap(remap);
+      pruneUnknownFactionRefs();
+      for (const hex of state.hexes.values()){
+        const regionRec = hex.region ? getRegion(hex.region) : null;
+        if (!regionRec || !hex.ownerFactionId || hex.ownerFactionId !== regionRec.factionId) hex.region = null;
+      }
 
       if (data.cultures){
         Object.entries(data.cultures).forEach(([name, raw]) => {
@@ -2686,7 +2911,6 @@ function importMap(file){
       }
       invalidateFactionCache();
       syncFactionCapitals();
-      ensureFactionCodes();
       pruneUnusedCultures();
       restoreRoutes(Array.isArray(data.routes) ? data.routes : []);
       state.buildingTypes = parseBuildingTypes(data.buildingTypes);

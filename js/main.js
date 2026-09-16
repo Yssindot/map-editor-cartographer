@@ -9,7 +9,7 @@ import {
   updateToolVisibility, refreshInteractionUI,
   refreshSelectedHexPanel, rebuildTerrainColors, rebuildTerrainSwatches,
   syncRouteSwatches, syncBgInputs, setActiveTool,
-  refreshBuildingUi,
+  refreshBuildingUi, refreshStatistics,
   closeFactionEditor, openModal
 } from './ui.js';
 
@@ -37,7 +37,8 @@ bindHooks({
   setActiveTool,
   closeFactionEditor,
   openModal,
-  refreshBuildingUi
+  refreshBuildingUi,
+  refreshStatistics
 });
 
 function init(){
@@ -72,6 +73,7 @@ function init(){
   updateHistoryButtons();
   refreshSelectedHexPanel();
   refreshBuildingUi();
+  refreshStatistics();
   render();
   lucide.createIcons();
 }

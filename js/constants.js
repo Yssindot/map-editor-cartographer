@@ -17,8 +17,8 @@ export const DEFAULT_TERRAIN_DEFS = [
   { id:'urban_ruins', label:'Urban Ruins', color:'#5a5248' }
 ];
 export const LEGACY_TERRAIN_IDS = { plains: 'grassland', river: 'grassland' };
-export const APP_VERSION = '0.9.0';
-export const MAP_META_VERSION = 10;
+export const APP_VERSION = '0.9.1';
+export const MAP_META_VERSION = 11;
 
 export const ELEVATION_DEFS = [
   { id:'flat',      label:'Flat' },
@@ -46,8 +46,12 @@ export const DEFAULT_BUILDING_TYPES = [
 ];
 
 export const FACTION_TYPES = [
-  { id: 'state',    label: 'State' },
-  { id: 'nonstate', label: 'Non-State' }
+  { id: 'state',     label: 'State' },
+  { id: 'nonstate',  label: 'Non-State Actor' },
+  { id: 'corporate', label: 'Corporate Entity' },
+  { id: 'rebel',     label: 'Rebel / Insurgent' },
+  { id: 'religious', label: 'Religious Order' },
+  { id: 'other',     label: 'Other' }
 ];
 export const FACTION_TYPE_LABELS = Object.fromEntries(FACTION_TYPES.map(t => [t.id, t.label]));
 export const FACTION_CODE_LEN = 4;

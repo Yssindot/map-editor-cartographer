@@ -36,15 +36,16 @@ export function normalizeFactionType(type){
   if (FACTION_TYPE_LABELS[type]) return type;
   const t = String(type || '').trim().toLowerCase();
   if (!t) return 'state';
-  if (t === 'state') return 'state';
-  if (
-    t === 'nonstate' || t === 'non-state' || t === 'non-state actor' || t === 'nonstate actor' ||
-    t === 'corporate entity' || t === 'rebel / insurgent' || t === 'religious order' || t === 'other'
-  ) return 'nonstate';
+  for (const def of Object.entries(FACTION_TYPE_LABELS)){
+    if (def[1].toLowerCase() === t) return def[0];
+  }
+  if (t === 'non-state' || t === 'nonstate actor' || t === 'non-state actor') return 'nonstate';
+  if (t === 'corporate entity' || t === 'corp') return 'corporate';
+  if (t === 'rebel / insurgent' || t === 'rebel' || t === 'insurgent') return 'rebel';
+  if (t === 'religious order' || t === 'religious') return 'religious';
   if (t.includes('non') || t.includes('rebel') || t.includes('corp') || t.includes('relig')) return 'nonstate';
   return 'state';
 }
-
 
 export function normalizeFactionCode(raw){
   if (typeof raw !== 'string') return '';
@@ -53,23 +54,47 @@ export function normalizeFactionCode(raw){
   return code.replace(/[^A-Z0-9]/g, '').slice(0, FACTION_CODE_LEN);
 }
 
-export function formatFactionCode(code){
-  return code ? `F-${code}` : '';
+export function formatFactionCode(raw){
+  const stem = normalizeFactionCode(raw);
+  return stem ? `F-${stem}` : '';
+}
+
+export function looksLikeFactionId(raw){
+  return typeof raw === 'string' && /^F-[A-Z0-9]{4}$/i.test(raw.trim());
 }
 
 export function normalizeFactionId(raw){
+  if (looksLikeFactionId(raw)) return formatFactionCode(raw);
   return typeof raw === 'string' ? raw.trim() : '';
 }
 
-export function makeFactionId(){
-  let id = '';
+export function takenFactionIds(exceptId){
+  const taken = new Set(state.factions.keys());
+  if (exceptId) taken.delete(exceptId);
+  return taken;
+}
+
+export function allocateFactionId(name, taken){
+  const used = taken || takenFactionIds();
+  let stem = String(name || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, FACTION_CODE_LEN);
+  while (stem.length < FACTION_CODE_LEN) stem += '0';
+  let id = formatFactionCode(stem);
+  if (id && !used.has(id)) return id;
+  for (let n = 1; n < 10000; n++){
+    const tail = String(n);
+    const candidate = stem.slice(0, FACTION_CODE_LEN - tail.length) + tail;
+    id = formatFactionCode(candidate);
+    if (!used.has(id)) return id;
+  }
   do {
-    const rand = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    id = `fac_${rand}`;
-  } while (state.factions.has(id));
+    const rand = Math.random().toString(36).toUpperCase().replace(/[^A-Z0-9]/g, 'X') + '0000';
+    id = formatFactionCode(rand.slice(0, FACTION_CODE_LEN));
+  } while (used.has(id));
   return id;
+}
+
+export function makeFactionId(name, exceptId){
+  return allocateFactionId(name, takenFactionIds(exceptId));
 }
 
 export function getFaction(id){
@@ -88,8 +113,10 @@ export function factionName(id){
 }
 
 export function isFactionCodeFree(code, exceptId){
+  const id = formatFactionCode(code);
+  if (!id) return false;
   for (const rec of state.factions.values()){
-    if (rec.id !== exceptId && rec.code === code) return false;
+    if (rec.id !== exceptId && rec.id === id) return false;
   }
   return true;
 }
@@ -102,7 +129,7 @@ export function isFactionNameFree(name, exceptId){
 }
 
 /* Squeezes a name down to four characters, then walks a numeric tail until the
-   code is unused, so every faction can get one without the user inventing it. */
+   F-XXXX identity is unused. */
 export function suggestFactionCode(name, exceptId){
   let stem = (name || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, FACTION_CODE_LEN);
   while (stem.length < FACTION_CODE_LEN) stem += '0';
@@ -115,21 +142,15 @@ export function suggestFactionCode(name, exceptId){
   return stem;
 }
 
-/* Maps made before codes existed, or files that arrive with clashing ones, get
-   filled in here rather than at record level so undo snapshots stay stable. */
-export function ensureFactionCodes(){
-  for (const rec of state.factions.values()){
-    if (rec.code.length !== FACTION_CODE_LEN || !isFactionCodeFree(rec.code, rec.id)){
-      rec.code = suggestFactionCode(rec.name, rec.id);
-    }
-  }
-}
-
 export function cloneCapital(cap){
+  if (typeof cap === 'string' && cap.trim()) return { name: cap.trim() };
   if (!cap || typeof cap !== 'object') return null;
   const q = Number(cap.q);
   const r = Number(cap.r);
-  return Number.isFinite(q) && Number.isFinite(r) ? { q, r } : null;
+  const hex = Number.isFinite(q) && Number.isFinite(r) ? { q, r } : null;
+  const name = typeof cap.name === 'string' ? cap.name.trim() : '';
+  if (!hex && !name) return null;
+  return { ...(hex || {}), ...(name ? { name } : {}) };
 }
 
 export function cloneFaction(rec){
@@ -137,7 +158,7 @@ export function cloneFaction(rec){
     id: rec.id,
     name: rec.name,
     color: rec.color,
-    code: rec.code,
+    code: rec.id,
     type: rec.type,
     ideology: rec.ideology,
     description: rec.description,
@@ -146,20 +167,105 @@ export function cloneFaction(rec){
   };
 }
 
-export function makeFaction(raw = {}){
-  const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : 'New Faction';
-  const givenId = normalizeFactionId(raw.id);
+function buildFactionRecord(raw, id){
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const name = typeof src.name === 'string' && src.name.trim() ? src.name.trim() : 'New Faction';
   return {
-    id: givenId || makeFactionId(),
+    id,
     name,
-    color: typeof raw.color === 'string' && raw.color ? raw.color : computeOwnerColor(name),
-    code: normalizeFactionCode(raw.code),
-    type: normalizeFactionType(raw.type),
-    ideology: typeof raw.ideology === 'string' ? raw.ideology : '',
-    description: typeof raw.description === 'string' ? raw.description : '',
-    flag: typeof raw.flag === 'string' && raw.flag ? raw.flag : null,
-    capital: cloneCapital(raw.capital)
+    color: typeof src.color === 'string' && src.color ? src.color : computeOwnerColor(name),
+    code: id,
+    type: normalizeFactionType(src.type),
+    ideology: typeof src.ideology === 'string' ? src.ideology : '',
+    description: typeof src.description === 'string' ? src.description : '',
+    flag: typeof src.flag === 'string' && src.flag ? src.flag : null,
+    capital: cloneCapital(src.capital)
   };
+}
+
+/* Basic faction record shared with Lorekeeper:
+   { id: "F-XXXX", name, code: "F-XXXX", type, ideology, description, color, flag, capital } */
+export function basicFactionEntry(rec){
+  return {
+    id: rec.id,
+    name: rec.name,
+    code: rec.id,
+    type: rec.type,
+    ideology: rec.ideology,
+    description: rec.description,
+    color: rec.color,
+    flag: rec.flag || null,
+    capital: cloneCapital(rec.capital)
+  };
+}
+
+export function ingestFactions(list){
+  const items = Array.isArray(list) ? list.filter(x => x && typeof x === 'object') : [];
+  const taken = new Set();
+  const assigned = new Array(items.length).fill(null);
+  const remap = new Map();
+
+  const claim = (index, id) => {
+    assigned[index] = id;
+    taken.add(id);
+    const item = items[index];
+    const rawId = typeof item.id === 'string' ? item.id.trim() : '';
+    if (rawId && rawId !== id && !looksLikeFactionId(rawId)) remap.set(rawId, id);
+  };
+
+  items.forEach((item, i) => {
+    if (!looksLikeFactionId(item.id)) return;
+    const id = formatFactionCode(item.id);
+    if (!taken.has(id)) claim(i, id);
+  });
+
+  items.forEach((item, i) => {
+    if (assigned[i]) return;
+    const stem = normalizeFactionCode(item.code);
+    if (stem.length !== FACTION_CODE_LEN) return;
+    const id = formatFactionCode(stem);
+    if (taken.has(id)){
+      assigned[i] = id;
+      const rawId = typeof item.id === 'string' ? item.id.trim() : '';
+      if (rawId && rawId !== id && !looksLikeFactionId(rawId)) remap.set(rawId, id);
+      return;
+    }
+    claim(i, id);
+  });
+
+  items.forEach((item, i) => {
+    if (assigned[i]) return;
+    claim(i, allocateFactionId(item.name, taken));
+  });
+
+  const recs = [];
+  const seen = new Set();
+  items.forEach((item, i) => {
+    const id = assigned[i];
+    if (seen.has(id)) return;
+    seen.add(id);
+    recs.push(buildFactionRecord(item, id));
+  });
+  return { recs, remap };
+}
+
+export function makeFaction(raw = {}, exceptId){
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const taken = takenFactionIds(exceptId);
+  let id = '';
+  if (looksLikeFactionId(src.id)){
+    const requested = formatFactionCode(src.id);
+    if (!taken.has(requested)) id = requested;
+  }
+  if (!id){
+    const stem = normalizeFactionCode(src.code);
+    if (stem.length === FACTION_CODE_LEN){
+      const fromCode = formatFactionCode(stem);
+      if (!taken.has(fromCode)) id = fromCode;
+    }
+  }
+  if (!id) id = allocateFactionId(src.name, taken);
+  return buildFactionRecord(src, id);
 }
 
 export function snapshotFactions(){
@@ -167,28 +273,27 @@ export function snapshotFactions(){
 }
 
 export function restoreFactions(snap){
+  const { recs, remap } = ingestFactions(Array.isArray(snap) ? snap : []);
   state.factions.clear();
-  if (snap){
-    const list = Array.isArray(snap) ? snap : [];
-    for (const raw of list){
-      const rec = makeFaction(raw && typeof raw === 'object' ? raw : {});
-      if (state.factions.has(rec.id)) continue;
-      state.factions.set(rec.id, rec);
-    }
-  }
+  for (const rec of recs) state.factions.set(rec.id, rec);
   invalidateFactionCache();
+  return remap;
+}
+
+export function ensureFactionCodes(){
+  const remap = restoreFactions(snapshotFactions());
+  applyFactionIdRemap(remap);
 }
 
 export function ensureFaction(id, raw){
-  const fid = normalizeFactionId(id);
-  if (!fid) return null;
-  if (!state.factions.has(fid)){
-    state.factions.set(fid, makeFaction({ ...(raw || {}), id: fid }));
+  const rec = makeFaction({ ...(raw || {}), id });
+  if (!state.factions.has(rec.id)){
+    state.factions.set(rec.id, rec);
     invalidateFactionCache();
   } else if (raw && typeof raw.color === 'string' && raw.color){
-    state.factions.get(fid).color = raw.color;
+    state.factions.get(rec.id).color = raw.color;
   }
-  return state.factions.get(fid);
+  return state.factions.get(rec.id);
 }
 
 export function factionColor(id){
@@ -226,6 +331,7 @@ export function getCapitalIndex(){
   state.capitalIndex = new Map();
   for (const rec of state.factions.values()){
     if (!rec.capital) continue;
+    if (!Number.isFinite(Number(rec.capital.q)) || !Number.isFinite(Number(rec.capital.r))) continue;
     const key = `${rec.capital.q},${rec.capital.r}`;
     const at = state.capitalIndex.get(key);
     if (at) at.push(rec.id);
@@ -247,11 +353,8 @@ export function uniqueFactionName(base, exceptId){
 }
 
 export function findFactionByCode(code){
-  if (!code) return null;
-  for (const rec of state.factions.values()){
-    if (rec.code === code) return rec;
-  }
-  return null;
+  const id = formatFactionCode(code);
+  return id ? getFaction(id) : null;
 }
 
 export function findFactionNameByCode(code){
@@ -259,12 +362,67 @@ export function findFactionNameByCode(code){
   return rec ? rec.name : null;
 }
 
-/* Passport import may still rename a faction. Hex/region/building/unit
-   references stay on the immutable id, so only the display name changes. */
 export function retargetFactionName(id, newName){
   const rec = getFaction(id);
   if (!rec || !newName || rec.name === newName) return;
   rec.name = newName;
+}
+
+export function applyFactionIdRemap(remap){
+  if (!remap || remap.size === 0) return;
+  const mapId = id => {
+    if (!id) return id;
+    return remap.has(id) ? remap.get(id) : id;
+  };
+  for (const hex of state.hexes.values()){
+    hex.ownerFactionId = mapId(hex.ownerFactionId);
+    hex.loyaltyFactionId = mapId(hex.loyaltyFactionId);
+    hex.controllerFactionId = mapId(hex.controllerFactionId);
+    for (const b of hex.buildings || []) b.ownerFactionId = mapId(b.ownerFactionId);
+    for (const u of hex.units || []) u.ownerFactionId = mapId(u.ownerFactionId);
+  }
+  for (const rec of state.regions.values()){
+    rec.factionId = mapId(rec.factionId);
+  }
+  const brush = state.brush;
+  brush.ownerFactionId = mapId(brush.ownerFactionId) || '';
+  brush.loyaltyFactionId = mapId(brush.loyaltyFactionId) || '';
+  brush.controllerFactionId = mapId(brush.controllerFactionId) || '';
+  brush.buildingOwnerFactionId = mapId(brush.buildingOwnerFactionId) || '';
+  brush.unitOwnerFactionId = mapId(brush.unitOwnerFactionId) || '';
+}
+
+export function pruneUnknownFactionRefs(){
+  for (const hex of state.hexes.values()){
+    hex.ownerFactionId = knownFactionId(hex.ownerFactionId) || null;
+    hex.loyaltyFactionId = knownFactionId(hex.loyaltyFactionId) || null;
+    hex.controllerFactionId = knownFactionId(hex.controllerFactionId) || null;
+    for (const b of hex.buildings || []) b.ownerFactionId = knownFactionId(b.ownerFactionId) || '';
+    for (const u of hex.units || []) u.ownerFactionId = knownFactionId(u.ownerFactionId) || '';
+  }
+  for (const rec of state.regions.values()){
+    rec.factionId = knownFactionId(rec.factionId) || '';
+  }
+  const brush = state.brush;
+  if (!knownFactionId(brush.ownerFactionId)) brush.ownerFactionId = '';
+  if (!knownFactionId(brush.loyaltyFactionId)) brush.loyaltyFactionId = '';
+  if (!knownFactionId(brush.controllerFactionId)) brush.controllerFactionId = '';
+  if (!knownFactionId(brush.buildingOwnerFactionId)) brush.buildingOwnerFactionId = '';
+  if (!knownFactionId(brush.unitOwnerFactionId)) brush.unitOwnerFactionId = '';
+}
+
+export function retargetFactionId(oldId, newId){
+  if (!oldId || !newId || oldId === newId) return true;
+  if (state.factions.has(newId)) return false;
+  const rec = state.factions.get(oldId);
+  if (!rec) return false;
+  state.factions.delete(oldId);
+  rec.id = newId;
+  rec.code = newId;
+  state.factions.set(newId, rec);
+  applyFactionIdRemap(new Map([[oldId, newId]]));
+  invalidateFactionCache();
+  return true;
 }
 
 
@@ -327,7 +485,7 @@ export function makeRegion(raw = {}){
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : 'New Region',
     type: typeof raw.type === 'string' && raw.type.trim() ? raw.type.trim() : 'Province',
     governor: typeof raw.governor === 'string' ? raw.governor.trim() : '',
-    factionId: knownFactionId(raw.factionId) || ''
+    factionId: typeof raw.factionId === 'string' ? raw.factionId.trim() : ''
   };
 }
 
@@ -338,13 +496,15 @@ export function snapshotRegions(){
   };
 }
 
-export function restoreRegions(snap){
+export function restoreRegions(snap, remap){
   if (snap == null) return;
   state.regions.clear();
   const list = Array.isArray(snap) ? snap : (snap.list || []);
   let maxId = 0;
   for (const raw of list){
     const rec = makeRegion(raw);
+    if (remap && rec.factionId && remap.has(rec.factionId)) rec.factionId = remap.get(rec.factionId);
+    rec.factionId = knownFactionId(rec.factionId) || '';
     if (state.regions.has(rec.id)) continue;
     state.regions.set(rec.id, rec);
     if (rec.id > maxId) maxId = rec.id;
@@ -462,6 +622,7 @@ export function stripFactionEntityRefs(factionId){
 export function getFactionCapitalHex(id){
   const rec = getFaction(id);
   if (!rec || !rec.capital) return null;
+  if (!Number.isFinite(Number(rec.capital.q)) || !Number.isFinite(Number(rec.capital.r))) return null;
   return state.hexes.get(`${rec.capital.q},${rec.capital.r}`) || null;
 }
 
@@ -478,14 +639,19 @@ export function hexIsCapital(hex){
 export function setFactionCapital(id, hex){
   const rec = getFaction(id);
   if (!rec) return;
-  rec.capital = hex ? { q: hex.q, r: hex.r } : null;
+  rec.capital = hex
+    ? { q: hex.q, r: hex.r, ...(rec.capital && rec.capital.name ? { name: rec.capital.name } : {}) }
+    : (rec.capital && rec.capital.name ? { name: rec.capital.name } : null);
   invalidateFactionCache();
 }
 
 export function syncFactionCapitals(){
   for (const rec of state.factions.values()){
     if (!rec.capital) continue;
-    if (!state.hexes.has(`${rec.capital.q},${rec.capital.r}`)) rec.capital = null;
+    if (!Number.isFinite(Number(rec.capital.q)) || !Number.isFinite(Number(rec.capital.r))) continue;
+    if (!state.hexes.has(`${rec.capital.q},${rec.capital.r}`)){
+      rec.capital = rec.capital.name ? { name: rec.capital.name } : null;
+    }
   }
   invalidateFactionCache();
 }
@@ -740,7 +906,7 @@ export function parseBuildings(raw){
       id: typeof b.id === 'string' && b.id ? b.id : `bld_${Date.now()}_${++state.nextBuildingSeq}`,
       building_id,
       name,
-      ownerFactionId: normalizeFactionId(b.ownerFactionId),
+      ownerFactionId: typeof b.ownerFactionId === 'string' ? b.ownerFactionId.trim() : '',
       operational: b.operational !== false,
       customData: (b.customData && typeof b.customData === 'object') ? { ...b.customData } : {}
     });
@@ -830,7 +996,7 @@ export function formatBuildingHoverLine(b){
   const type = getBuildingType(b.building_id);
   const typeName = type ? type.name : b.building_id;
   const rec = getFaction(b.ownerFactionId);
-  const code = rec ? formatFactionCode(rec.code) : '—';
+  const code = rec ? rec.id : '—';
   return `[${code}] ${b.name} (${typeName})`;
 }
 
@@ -859,7 +1025,7 @@ export function parseUnits(raw){
     out.push({
       id: typeof u.id === 'string' && u.id ? u.id : makeUnitId(),
       name,
-      ownerFactionId: normalizeFactionId(u.ownerFactionId),
+      ownerFactionId: typeof u.ownerFactionId === 'string' ? u.ownerFactionId.trim() : '',
       personnel,
       notes: typeof u.notes === 'string' ? u.notes : '',
       customData: (u.customData && typeof u.customData === 'object') ? { ...u.customData } : {}
@@ -929,7 +1095,7 @@ export function formatPersonnel(n){
 
 export function formatUnitHoverLine(u){
   const rec = getFaction(u.ownerFactionId);
-  const code = rec ? formatFactionCode(rec.code) : '—';
+  const code = rec ? rec.id : '—';
   return `[${code}] ${u.name} (${formatPersonnel(u.personnel)} men)`;
 }
 
@@ -1083,9 +1249,11 @@ export function applyFullState(full){
   state.mapCols = full.mapCols; state.mapRows = full.mapRows;
   document.getElementById('mapCols').value = state.mapCols;
   document.getElementById('mapRows').value = state.mapRows;
-  restoreFactions(full.factions);
+  const remap = restoreFactions(full.factions);
   restoreCultures(full.cultures);
-  restoreRegions(full.regions || { nextId: 1, list: [] });
+  restoreRegions(full.regions || { nextId: 1, list: [] }, remap);
+  applyFactionIdRemap(remap);
+  pruneUnknownFactionRefs();
   restoreRoutes(full.routes);
   state.buildingTypes = parseBuildingTypes(full.buildingTypes);
   if (Number.isFinite(full.nextBuildingSeq)) state.nextBuildingSeq = full.nextBuildingSeq;
@@ -1215,6 +1383,7 @@ export function commitAction() {
   state.activeCulturesBefore = null;
   state.activeRegionsBefore = null;
   hooks.refreshSelectedHexPanel();
+  hooks.refreshStatistics();
 }
 
 export function executeAtomicDelta(hexesToMark, fn) {
@@ -1248,9 +1417,11 @@ export function undo(){
       regionsBefore: action.regionsBefore,
       regionsAfter: action.regionsAfter
     });
-    restoreFactions(action.factionsBefore);
+    const remap = restoreFactions(action.factionsBefore);
     restoreCultures(action.culturesBefore);
-    restoreRegions(action.regionsBefore);
+    restoreRegions(action.regionsBefore, remap);
+    applyFactionIdRemap(remap);
+    pruneUnknownFactionRefs();
   } else if (action.type === 'routes') {
     state.redoStack.push({ type: 'routes', before: cloneRoutes(action.before), after: cloneRoutes(action.after) });
     restoreRoutes(action.before);
@@ -1269,6 +1440,7 @@ export function undo(){
   hooks.refreshSelectedHexPanel();
   updateHistoryButtons();
   hooks.refreshBuildingUi();
+  hooks.refreshStatistics();
 }
 
 export function redo(){
@@ -1295,9 +1467,11 @@ export function redo(){
       regionsBefore: action.regionsBefore,
       regionsAfter: action.regionsAfter
     });
-    restoreFactions(action.factionsAfter);
+    const remap = restoreFactions(action.factionsAfter);
     restoreCultures(action.culturesAfter);
-    restoreRegions(action.regionsAfter);
+    restoreRegions(action.regionsAfter, remap);
+    applyFactionIdRemap(remap);
+    pruneUnknownFactionRefs();
   } else if (action.type === 'routes') {
     state.undoStack.push({ type: 'routes', before: cloneRoutes(action.before), after: cloneRoutes(action.after) });
     restoreRoutes(action.after);
@@ -1316,6 +1490,7 @@ export function redo(){
   hooks.refreshSelectedHexPanel();
   updateHistoryButtons();
   hooks.refreshBuildingUi();
+  hooks.refreshStatistics();
 }
 
 export function reresolveSelection(){
@@ -1463,6 +1638,217 @@ export function formatPop(n){
   if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'k';
   return String(n);
+}
+
+function hexPop(hex){
+  return Math.max(0, Number(hex && hex.population) || 0);
+}
+
+function emptyStatBucket(){
+  return {
+    hexes: 0,
+    population: 0,
+    landHexes: 0,
+    inhabitedHexes: 0,
+    buildings: 0,
+    units: 0,
+    ownControlHexes: 0,
+    ownControlLandHexes: 0,
+    occupiedHexes: 0,
+    occupiedPop: 0,
+    foreignControlHexes: 0,
+    foreignControlPop: 0,
+    loyalOwnPop: 0,
+    loyalOtherPop: 0,
+    loyalNonePop: 0,
+    cultures: new Map(),
+    unpaintedCulturePop: 0,
+    regions: new Map()
+  };
+}
+
+function addCulturePop(map, name, pop){
+  if (!name) return;
+  map.set(name, (map.get(name) || 0) + Math.max(0, pop));
+}
+
+function sortedShareList(map, total){
+  return Array.from(map.entries())
+    .filter(([, pop]) => pop > 0)
+    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+    .map(([key, pop]) => ({
+      key,
+      pop,
+      share: total > 0 ? pop / total : 0
+    }));
+}
+
+function cultureDiversityLabel(entries, culturedPop){
+  if (!entries.length || culturedPop <= 0) return '';
+  if (entries.length === 1) return 'Homogeneous';
+  let hhi = 0;
+  for (const row of entries){
+    const p = row.pop / culturedPop;
+    hhi += p * p;
+  }
+  const diversity = 1 - hhi;
+  if (diversity < 0.15) return 'Very low diversity';
+  if (diversity < 0.35) return 'Low diversity';
+  if (diversity < 0.55) return 'Moderate diversity';
+  if (diversity < 0.75) return 'High diversity';
+  return 'Very high diversity';
+}
+
+function cultureSummary(bucket, scopePop){
+  const list = sortedShareList(bucket.cultures, scopePop);
+  const culturedPop = list.reduce((sum, row) => sum + row.pop, 0);
+  const largest = list[0] || null;
+  return {
+    list,
+    culturedPop,
+    unpaintedPop: bucket.unpaintedCulturePop,
+    present: bucket.cultures.size,
+    largest: largest ? { name: largest.key, pop: largest.pop, share: largest.share } : null,
+    diversity: cultureDiversityLabel(list, culturedPop)
+  };
+}
+
+function finishFactionStats(id, bucket, worldPop){
+  const rec = getFaction(id);
+  const population = bucket.population;
+  const territory = bucket.hexes;
+  return {
+    id,
+    name: rec ? rec.name : '',
+    color: rec ? rec.color : '',
+    flag: rec ? rec.flag : null,
+    population,
+    worldShare: worldPop > 0 ? population / worldPop : 0,
+    territoryHexes: territory,
+    controlledTerritoryHexes: bucket.ownControlHexes,
+    ownControlShare: bucket.landHexes > 0
+      ? bucket.ownControlLandHexes / bucket.landHexes
+      : (territory > 0 ? 1 : 0),
+    occupiedHexes: bucket.occupiedHexes,
+    occupiedPop: bucket.occupiedPop,
+    foreignControlHexes: bucket.foreignControlHexes,
+    foreignControlPop: bucket.foreignControlPop,
+    administrativeRegions: bucket.regions.size,
+    popPerHex: territory > 0 ? population / territory : 0,
+    buildings: bucket.buildings,
+    units: bucket.units,
+    cultures: cultureSummary(bucket, population),
+    cohesion: {
+      loyalOwn: bucket.loyalOwnPop,
+      loyalOwnShare: population > 0 ? bucket.loyalOwnPop / population : 0,
+      loyalOther: bucket.loyalOtherPop,
+      loyalOtherShare: population > 0 ? bucket.loyalOtherPop / population : 0,
+      none: bucket.loyalNonePop,
+      noneShare: population > 0 ? bucket.loyalNonePop / population : 0
+    },
+    regions: sortedShareList(bucket.regions, population).map(row => {
+      const region = getRegion(row.key);
+      return {
+        id: row.key,
+        name: region ? region.name : '',
+        pop: row.pop,
+        share: row.share
+      };
+    }).filter(row => row.name)
+  };
+}
+
+/* Live totals from current hexes. Nothing here is written back into the map file. */
+export function computeMapStatistics(){
+  const world = emptyStatBucket();
+  const factionPops = new Map();
+  const buckets = new Map();
+  for (const rec of state.factions.values()){
+    buckets.set(rec.id, emptyStatBucket());
+    factionPops.set(rec.id, 0);
+  }
+
+  for (const hex of state.hexes.values()){
+    const pop = hexPop(hex);
+    const land = !isWaterHex(hex);
+    const buildings = (hex.buildings || []).length;
+    const units = (hex.units || []).length;
+    const owner = hex.ownerFactionId || null;
+    const controller = hex.controllerFactionId || null;
+    const loyalty = hex.loyaltyFactionId || null;
+
+    world.hexes += 1;
+    world.population += pop;
+    if (land) world.landHexes += 1;
+    if (pop > 0) world.inhabitedHexes += 1;
+    world.buildings += buildings;
+    world.units += units;
+    if (hex.culture) addCulturePop(world.cultures, hex.culture, pop);
+    else world.unpaintedCulturePop += pop;
+    if (owner && factionPops.has(owner)) factionPops.set(owner, factionPops.get(owner) + pop);
+
+    const bucket = owner ? buckets.get(owner) : null;
+    if (bucket){
+      bucket.hexes += 1;
+      bucket.population += pop;
+      if (land) bucket.landHexes += 1;
+      if (pop > 0) bucket.inhabitedHexes += 1;
+      bucket.buildings += buildings;
+      bucket.units += units;
+      if (controller === owner){
+        bucket.ownControlHexes += 1;
+        if (land) bucket.ownControlLandHexes += 1;
+      } else if (controller){
+        bucket.occupiedHexes += 1;
+        bucket.occupiedPop += pop;
+      }
+      if (loyalty === owner) bucket.loyalOwnPop += pop;
+      else if (loyalty) bucket.loyalOtherPop += pop;
+      else bucket.loyalNonePop += pop;
+      if (hex.culture) addCulturePop(bucket.cultures, hex.culture, pop);
+      else bucket.unpaintedCulturePop += pop;
+      const region = hexRegion(hex);
+      if (region) bucket.regions.set(region.id, (bucket.regions.get(region.id) || 0) + pop);
+    }
+
+    if (controller && controller !== owner){
+      const foreign = buckets.get(controller);
+      if (foreign){
+        foreign.foreignControlHexes += 1;
+        foreign.foreignControlPop += pop;
+      }
+    }
+  }
+
+  const worldPop = world.population;
+  const factionList = Array.from(state.factions.values()).map(rec => {
+    const pop = factionPops.get(rec.id) || 0;
+    return {
+      id: rec.id,
+      name: rec.name,
+      pop,
+      share: worldPop > 0 ? pop / worldPop : 0
+    };
+  }).sort((a, b) => b.pop - a.pop || a.name.localeCompare(b.name));
+
+  const factions = {};
+  for (const rec of state.factions.values()){
+    factions[rec.id] = finishFactionStats(rec.id, buckets.get(rec.id), worldPop);
+  }
+
+  return {
+    world: {
+      population: worldPop,
+      hexes: world.hexes,
+      landHexes: world.landHexes,
+      inhabitedHexes: world.inhabitedHexes,
+      buildings: world.buildings,
+      units: world.units,
+      cultures: cultureSummary(world, worldPop),
+      factions: factionList
+    },
+    factions
+  };
 }
 
 export function updateHeatmapLegend(){
@@ -1900,6 +2286,7 @@ export function paintAtScreen(mx, my){
   if (changed){
     hooks.render();
     if (tool.afterStroke) tool.afterStroke();
+    hooks.refreshStatistics();
     if (state.hoveredHex) hooks.updateInspector(state.hoveredHex);
   }
 }

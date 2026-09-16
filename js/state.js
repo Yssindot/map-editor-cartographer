@@ -108,7 +108,8 @@ export const hooks = {
   setActiveTool() {},
   closeFactionEditor() {},
   openModal() {},
-  refreshBuildingUi() {}
+  refreshBuildingUi() {},
+  refreshStatistics() {}
 };
 
 export function bindHooks(next) {
