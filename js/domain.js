@@ -5,7 +5,7 @@ import {
   HEATMAP_STOPS, AUTOSAVE_KEY, DEFAULT_BUILDING_TYPES
 } from './constants.js';
 import {
-  axialToPixel, pixelToAxial, axialRound, offsetToAxial, hexRange,
+  axialToPixel, pixelToAxial, axialRound, offsetToAxial, axialToOffset, hexRange,
   NEIGHBOR_DIRS, clamp, axialDistance, hexLine, expandWaypoints
 } from './hexMath.js';
 import {
@@ -753,7 +753,7 @@ export const TOOL_DEFS = [
   },
   {
     id: 'path',
-    label: 'Road / River',
+    label: 'Routes',
     kind: 'path',
     number: '7',
     shortcut: '7',
@@ -807,7 +807,8 @@ export const TOOL_DEFS = [
     id: 'controller',
     label: 'De Facto',
     kind: 'paint',
-    number: '10',
+    number: 'D',
+    shortcut: 'd',
     hint: '<div><b>Left</b> drag — paint de facto control</div>',
     previewFill: 'rgba(196, 92, 54, 0.28)',
     apply(hex){
@@ -821,7 +822,8 @@ export const TOOL_DEFS = [
     id: 'region',
     label: 'Region',
     kind: 'paint',
-    number: '11',
+    number: 'R',
+    shortcut: 'r',
     hint: '<div><b>Left</b> drag — paint administrative region</div>',
     previewFill: 'rgba(232, 214, 160, 0.28)',
     apply(hex){
@@ -836,6 +838,14 @@ export const TOOL_DEFS = [
     afterStroke(){
       hooks.refreshRegionList();
     }
+  },
+  {
+    id: 'area',
+    label: 'Area',
+    kind: 'area',
+    number: 'A',
+    shortcut: 'a',
+    hint: '<div><b>Drag</b> — select a rectangle of hexes</div><div><b>Drag inside</b> — move the selection</div><div><b>Ctrl+C / X / V</b> — copy, cut, paste</div><div><b>Delete</b> — clear the selection</div>'
   }
 ];
 export const TOOL_BY_ID = Object.fromEntries(TOOL_DEFS.map(t => [t.id, t]));
@@ -1202,10 +1212,20 @@ export function routeIdsAtKey(key){
   return getRouteIndex().get(key) || [];
 }
 
-/* A path may never cover a hex twice, and may touch another path only at single
-   hexes — junctions, branch origins and crossings. Sharing two hexes in a row
-   means the two paths would run along each other, which is rejected. */
-export function validatePath(waypoints, excludeRouteId){
+export function routeKindOf(style){
+  return (ROUTE_BY_ID[style] || {}).kind || null;
+}
+
+export function routeUsesMouths(style){
+  const kind = routeKindOf(style);
+  return kind === 'river' || kind === 'channel';
+}
+
+/* A path may never cover a hex twice. Paths of the same kind may touch only at
+   single hexes — junctions and crossings. Sharing two hexes in a row with another
+   path of the same kind is rejected. Different kinds (road, river, channel) may
+   share any number of tiles. */
+export function validatePath(waypoints, excludeRouteId, styleId){
   const cells = expandWaypoints(waypoints);
   const blocked = new Set();
   if (cells.length < 2) return { ok: true, cells, blocked };
@@ -1217,10 +1237,18 @@ export function validatePath(waypoints, excludeRouteId){
     seen.add(key);
   }
 
-  const idsPerCell = cells.map(c => routeIdsAtKey(`${c.q},${c.r}`).filter(id => id !== excludeRouteId));
+  const style = styleId
+    || (excludeRouteId != null ? (state.routes.find(r => r.id === excludeRouteId) || {}).style : null)
+    || state.brush.routeStyle;
+  const kind = routeKindOf(style);
+  const idsPerCell = cells.map(c => routeIdsAtKey(`${c.q},${c.r}`).filter(id => {
+    if (id === excludeRouteId) return false;
+    const other = state.routes.find(r => r.id === id);
+    return other && routeKindOf(other.style) === kind;
+  }));
   for (let i = 0; i < cells.length - 1; i++){
-    const overlapsSameRoute = idsPerCell[i].some(id => idsPerCell[i + 1].includes(id));
-    if (overlapsSameRoute){
+    const overlapsSameKind = idsPerCell[i].some(id => idsPerCell[i + 1].includes(id));
+    if (overlapsSameKind){
       blocked.add(`${cells[i].q},${cells[i].r}`);
       blocked.add(`${cells[i + 1].q},${cells[i + 1].r}`);
     }
@@ -1255,6 +1283,7 @@ export function applyFullState(full){
   applyFactionIdRemap(remap);
   pruneUnknownFactionRefs();
   restoreRoutes(full.routes);
+  resetAreaInteraction(true);
   state.buildingTypes = parseBuildingTypes(full.buildingTypes);
   if (Number.isFinite(full.nextBuildingSeq)) state.nextBuildingSeq = full.nextBuildingSeq;
   if (!state.buildingTypes.some(t => t.building_id === state.brush.buildingTypeId)){
@@ -1546,6 +1575,7 @@ export function generateMap(cols, rows){
   state.pathDraft = null;
   state.routeDrag = null;
   state.selectedRouteId = null;
+  resetAreaInteraction(true);
   invalidateRouteIndex();
   invalidatePopulationStats();
   for (let row = 0; row < rows; row++){
@@ -1653,7 +1683,6 @@ function emptyStatBucket(){
     buildings: 0,
     units: 0,
     ownControlHexes: 0,
-    ownControlLandHexes: 0,
     occupiedHexes: 0,
     occupiedPop: 0,
     foreignControlHexes: 0,
@@ -1726,9 +1755,7 @@ function finishFactionStats(id, bucket, worldPop){
     worldShare: worldPop > 0 ? population / worldPop : 0,
     territoryHexes: territory,
     controlledTerritoryHexes: bucket.ownControlHexes,
-    ownControlShare: bucket.landHexes > 0
-      ? bucket.ownControlLandHexes / bucket.landHexes
-      : (territory > 0 ? 1 : 0),
+    ownControlShare: territory > 0 ? bucket.ownControlHexes / territory : 0,
     occupiedHexes: bucket.occupiedHexes,
     occupiedPop: bucket.occupiedPop,
     foreignControlHexes: bucket.foreignControlHexes,
@@ -1769,20 +1796,33 @@ export function computeMapStatistics(){
   }
 
   for (const hex of state.hexes.values()){
-    const pop = hexPop(hex);
-    const land = !isWaterHex(hex);
-    const buildings = (hex.buildings || []).length;
-    const units = (hex.units || []).length;
+    const buildings = hex.buildings || [];
+    const units = hex.units || [];
     const owner = hex.ownerFactionId || null;
     const controller = hex.controllerFactionId || null;
     const loyalty = hex.loyaltyFactionId || null;
 
+    world.buildings += buildings.length;
+    world.units += units.length;
+    for (const b of buildings){
+      const fid = knownFactionId(b.ownerFactionId);
+      const owned = fid ? buckets.get(fid) : null;
+      if (owned) owned.buildings += 1;
+    }
+    for (const u of units){
+      const fid = knownFactionId(u.ownerFactionId);
+      const owned = fid ? buckets.get(fid) : null;
+      if (owned) owned.units += 1;
+    }
+
+    if (isWaterHex(hex)) continue;
+
+    const pop = hexPop(hex);
+
     world.hexes += 1;
     world.population += pop;
-    if (land) world.landHexes += 1;
+    world.landHexes += 1;
     if (pop > 0) world.inhabitedHexes += 1;
-    world.buildings += buildings;
-    world.units += units;
     if (hex.culture) addCulturePop(world.cultures, hex.culture, pop);
     else world.unpaintedCulturePop += pop;
     if (owner && factionPops.has(owner)) factionPops.set(owner, factionPops.get(owner) + pop);
@@ -1791,14 +1831,10 @@ export function computeMapStatistics(){
     if (bucket){
       bucket.hexes += 1;
       bucket.population += pop;
-      if (land) bucket.landHexes += 1;
+      bucket.landHexes += 1;
       if (pop > 0) bucket.inhabitedHexes += 1;
-      bucket.buildings += buildings;
-      bucket.units += units;
-      if (controller === owner){
-        bucket.ownControlHexes += 1;
-        if (land) bucket.ownControlLandHexes += 1;
-      } else if (controller){
+      if (controller === owner) bucket.ownControlHexes += 1;
+      else if (controller){
         bucket.occupiedHexes += 1;
         bucket.occupiedPop += pop;
       }
@@ -1918,7 +1954,7 @@ export function riverMouthPoint(cell, inwardCell){
 /* Terminals of a river that reach open water, as plain hex coordinates. */
 export function routeMouths(route){
   const def = ROUTE_BY_ID[route.style];
-  if (!def || def.kind !== 'river') return [];
+  if (!def || !routeUsesMouths(route.style)) return [];
   const cells = routeCells(route);
   if (cells.length < 2) return [];
 
@@ -1960,7 +1996,7 @@ export function routeWorldPolylines(waypoints, styleId){
   }
 
   const def = ROUTE_BY_ID[styleId];
-  if (def && def.kind === 'river' && expanded.length >= 2 && runs.length > 0){
+  if (def && routeUsesMouths(styleId) && expanded.length >= 2 && runs.length > 0){
     const head = runs[0];
     if (head.from === 0){
       const mouth = riverMouthPoint(expanded[0], expanded[1]);
@@ -2086,7 +2122,7 @@ export function renameRoute(id, nextName){
   const name = (nextName || '').trim();
   if (!route || !name || route.name === name) return;
   if (routeNameTaken(name, id)){
-    alert(`Another road or river is already called "${name}".`);
+    alert(`Another route is already called "${name}".`);
     return;
   }
   const before = cloneRoutes();
@@ -2102,7 +2138,7 @@ export function moveWaypoint(routeId, index, hex){
   const next = cloneWaypoints(state.routes[idx].waypoints);
   if (!next[index] || sameHex(next[index], hex)) return false;
   next[index] = { q: hex.q, r: hex.r };
-  if (!validatePath(next, routeId).ok) return false;
+  if (!validatePath(next, routeId, state.routes[idx].style).ok) return false;
   const before = cloneRoutes();
   replaceRoute(idx, next);
   pushRoutesUndo(before);
@@ -2115,7 +2151,7 @@ export function insertWaypoint(routeId, at, hex){
   if (idx < 0 || at < 1) return false;
   const next = cloneWaypoints(state.routes[idx].waypoints);
   next.splice(at, 0, { q: hex.q, r: hex.r });
-  if (!validatePath(next, routeId).ok) return false;
+  if (!validatePath(next, routeId, state.routes[idx].style).ok) return false;
   const before = cloneRoutes();
   replaceRoute(idx, next);
   pushRoutesUndo(before);
@@ -2128,7 +2164,7 @@ export function removeWaypoint(routeId, index){
   if (idx < 0) return false;
   if (state.routes[idx].waypoints.length <= 2) return false;
   const next = cloneWaypoints(state.routes[idx].waypoints).filter((_, i) => i !== index);
-  if (!validatePath(next, routeId).ok) return false;
+  if (!validatePath(next, routeId, state.routes[idx].style).ok) return false;
   const before = cloneRoutes();
   replaceRoute(idx, next);
   pushRoutesUndo(before);
@@ -2233,7 +2269,7 @@ export function handlePathClick(hex, e){
   if (sameHex(last, hex)) return;
 
   const candidate = state.pathDraft.waypoints.concat([{ q: hex.q, r: hex.r }]);
-  if (!validatePath(candidate, state.pathDraft.routeId).ok) return;
+  if (!validatePath(candidate, state.pathDraft.routeId, state.pathDraft.style).ok) return;
 
   state.pathDraft.waypoints = candidate;
   if (e.shiftKey){
@@ -2248,6 +2284,487 @@ export function handlePathClick(hex, e){
 export function refreshPathUi(){
   const btn = document.getElementById('cancelPathBtn');
   if (btn) btn.disabled = !state.pathDraft;
+}
+
+/* ----------------------------------------------------------------------------
+   7b. AREA SELECTION
+   ---------------------------------------------------------------------------- */
+export function resetAreaInteraction(keepClipboard){
+  state.areaRect = null;
+  state.areaDrag = null;
+  state.areaMode = 'idle';
+  if (!keepClipboard) state.areaClipboard = null;
+  hooks.refreshAreaUi();
+}
+
+export function cancelAreaTool(){
+  state.areaDrag = null;
+  state.areaRect = null;
+  state.areaMode = 'idle';
+  hooks.refreshAreaUi();
+  hooks.refreshInteractionUI();
+}
+
+export function areaRectSize(rect){
+  if (!rect) return { cols: 0, rows: 0 };
+  return {
+    cols: rect.maxCol - rect.minCol + 1,
+    rows: rect.maxRow - rect.minRow + 1
+  };
+}
+
+export function areaRectFromCorners(c1, r1, c2, r2){
+  const minCol = Math.max(0, Math.min(c1, c2));
+  const maxCol = Math.min(state.mapCols - 1, Math.max(c1, c2));
+  const minRow = Math.max(0, Math.min(r1, r2));
+  const maxRow = Math.min(state.mapRows - 1, Math.max(r1, r2));
+  if (minCol > maxCol || minRow > maxRow) return null;
+  return { minCol, maxCol, minRow, maxRow };
+}
+
+export function hexInAreaRect(hex, rect){
+  if (!hex || !rect) return false;
+  const off = axialToOffset(hex.q, hex.r);
+  return off.col >= rect.minCol && off.col <= rect.maxCol && off.row >= rect.minRow && off.row <= rect.maxRow;
+}
+
+export function getLiveAreaRect(){
+  if (state.areaDrag && state.areaDrag.kind === 'select'){
+    return areaRectFromCorners(state.areaDrag.startCol, state.areaDrag.startRow, state.areaDrag.endCol, state.areaDrag.endRow);
+  }
+  return state.areaRect;
+}
+
+export function getAreaPreviewRect(){
+  if (state.areaDrag && state.areaDrag.kind === 'move' && state.areaRect){
+    const dCol = state.areaDrag.destCol - state.areaDrag.originCol;
+    const dRow = state.areaDrag.destRow - state.areaDrag.originRow;
+    const size = areaRectSize(state.areaRect);
+    return areaRectFromCorners(
+      state.areaRect.minCol + dCol,
+      state.areaRect.minRow + dRow,
+      state.areaRect.minCol + dCol + size.cols - 1,
+      state.areaRect.minRow + dRow + size.rows - 1
+    );
+  }
+  if ((state.areaMode === 'paste' || state.areaMode === 'move') && state.hoveredHex){
+    const off = axialToOffset(state.hoveredHex.q, state.hoveredHex.r);
+    let cols = 0, rows = 0;
+    if (state.areaMode === 'paste' && state.areaClipboard){
+      cols = state.areaClipboard.cols;
+      rows = state.areaClipboard.rows;
+    } else if (state.areaMode === 'move' && state.areaRect){
+      const size = areaRectSize(state.areaRect);
+      cols = size.cols;
+      rows = size.rows;
+    }
+    if (cols < 1 || rows < 1) return null;
+    return areaRectFromCorners(off.col, off.row, off.col + cols - 1, off.row + rows - 1);
+  }
+  return null;
+}
+
+function forEachHexInRect(rect, fn){
+  if (!rect) return;
+  for (let row = rect.minRow; row <= rect.maxRow; row++){
+    for (let col = rect.minCol; col <= rect.maxCol; col++){
+      const { q, r } = offsetToAxial(col, row);
+      const hex = state.hexes.get(`${q},${r}`);
+      if (hex) fn(hex, col, row);
+    }
+  }
+}
+
+function resetHexToEmpty(hex){
+  hex.terrain = 'ocean';
+  hex.elevation = 'flat';
+  hex.population = 0;
+  hex.ownerFactionId = null;
+  hex.loyaltyFactionId = null;
+  hex.controllerFactionId = null;
+  hex.region = null;
+  hex.culture = null;
+  hex.cityName = null;
+  hex.customData = {};
+  hex.buildings = [];
+  hex.units = [];
+}
+
+function hexPayload(hex){
+  const cloned = cloneHex(hex);
+  delete cloned.q;
+  delete cloned.r;
+  delete cloned.x;
+  delete cloned.y;
+  return cloned;
+}
+
+function applyHexPayload(dest, src){
+  dest.terrain = src.terrain;
+  dest.elevation = src.elevation || 'flat';
+  dest.population = Number(src.population) || 0;
+  dest.ownerFactionId = src.ownerFactionId || null;
+  dest.loyaltyFactionId = src.loyaltyFactionId || null;
+  dest.controllerFactionId = src.controllerFactionId || null;
+  dest.region = src.region || null;
+  dest.culture = src.culture || null;
+  dest.cityName = src.cityName || null;
+  dest.customData = { ...(src.customData || {}) };
+  dest.buildings = cloneBuildings(src.buildings);
+  dest.units = cloneUnits(src.units);
+  for (const b of dest.buildings) b.id = `bld_${Date.now()}_${++state.nextBuildingSeq}`;
+  for (const u of dest.units) u.id = makeUnitId();
+  const regionRec = dest.region ? getRegion(dest.region) : null;
+  if (!regionRec || !dest.ownerFactionId || dest.ownerFactionId !== regionRec.factionId) dest.region = null;
+}
+
+function clipRouteByCellPredicate(route, keepFn){
+  const cells = routeCells(route);
+  const runs = [];
+  let run = [];
+  for (const cell of cells){
+    if (keepFn(cell)){
+      run.push({ q: cell.q, r: cell.r });
+    } else if (run.length){
+      if (run.length >= 2) runs.push(run);
+      run = [];
+    }
+  }
+  if (run.length >= 2) runs.push(run);
+  return runs;
+}
+
+function replaceRoutes(next){
+  state.routes.length = 0;
+  for (const r of next) state.routes.push(r);
+  invalidateRouteIndex();
+}
+
+function rewriteRoutesKeepOutside(rect){
+  const next = [];
+  for (const route of state.routes){
+    const runs = clipRouteByCellPredicate(route, cell => !hexInAreaRect(cell, rect));
+    if (!runs.length) continue;
+    next.push(makeRoute(route.id, route.style, runs[0], route.name));
+    for (let i = 1; i < runs.length; i++){
+      next.push(makeRoute(state.nextRouteId++, route.style, runs[i]));
+    }
+  }
+  replaceRoutes(next);
+}
+
+function stripCapitalsInRect(rect){
+  for (const rec of state.factions.values()){
+    if (!rec.capital || !Number.isFinite(Number(rec.capital.q))) continue;
+    if (hexInAreaRect(rec.capital, rect)) setFactionCapital(rec.id, null);
+  }
+}
+
+function captureAreaClipboard(rect, { includeCapitals }){
+  const size = areaRectSize(rect);
+  const hexes = [];
+  forEachHexInRect(rect, (hex, col, row) => {
+    hexes.push({
+      col: col - rect.minCol,
+      row: row - rect.minRow,
+      data: hexPayload(hex)
+    });
+  });
+  const routes = [];
+  for (const route of state.routes){
+    const runs = clipRouteByCellPredicate(route, cell => hexInAreaRect(cell, rect));
+    for (const run of runs){
+      routes.push({
+        style: route.style,
+        name: route.name,
+        waypoints: run.map(cell => {
+          const off = axialToOffset(cell.q, cell.r);
+          return { col: off.col - rect.minCol, row: off.row - rect.minRow };
+        })
+      });
+    }
+  }
+  const capitals = [];
+  if (includeCapitals){
+    for (const rec of state.factions.values()){
+      if (!rec.capital || !Number.isFinite(Number(rec.capital.q))) continue;
+      if (!hexInAreaRect(rec.capital, rect)) continue;
+      const off = axialToOffset(rec.capital.q, rec.capital.r);
+      capitals.push({
+        id: rec.id,
+        col: off.col - rect.minCol,
+        row: off.row - rect.minRow
+      });
+    }
+  }
+  return { cols: size.cols, rows: size.rows, hexes, routes, capitals };
+}
+
+function applyClipboard(clip, destCol, destRow, { moveCapitals }){
+  if (!clip) return;
+  for (const cell of clip.hexes){
+    const { q, r } = offsetToAxial(destCol + cell.col, destRow + cell.row);
+    const hex = state.hexes.get(`${q},${r}`);
+    if (hex) applyHexPayload(hex, cell.data);
+  }
+  for (const route of clip.routes){
+    const runs = [];
+    let run = [];
+    for (const w of route.waypoints){
+      const { q, r } = offsetToAxial(destCol + w.col, destRow + w.row);
+      if (state.hexes.has(`${q},${r}`)){
+        run.push({ q, r });
+      } else if (run.length){
+        if (run.length >= 2) runs.push(run);
+        run = [];
+      }
+    }
+    if (run.length >= 2) runs.push(run);
+    for (const wps of runs){
+      state.routes.push(makeRoute(state.nextRouteId++, route.style, wps));
+    }
+  }
+  invalidateRouteIndex();
+  if (moveCapitals){
+    for (const cap of clip.capitals || []){
+      const { q, r } = offsetToAxial(destCol + cap.col, destRow + cap.row);
+      const hex = state.hexes.get(`${q},${r}`);
+      if (hex) setFactionCapital(cap.id, hex);
+    }
+  }
+}
+
+function afterAreaMutation(){
+  invalidateFactionCache();
+  invalidatePopulationStats();
+  invalidateRouteIndex();
+  syncFactionCapitals();
+  pruneUnusedCultures();
+  pruneUnknownFactionRefs();
+  reresolveSelection();
+  updateHistoryButtons();
+  throttledAutosave();
+  hooks.refreshFactionList();
+  hooks.refreshLoyaltyList();
+  hooks.refreshControllerList();
+  hooks.refreshCultureList();
+  hooks.refreshRegionList();
+  hooks.refreshRouteList();
+  hooks.refreshSelectedHexPanel();
+  hooks.refreshBuildingUi();
+  hooks.refreshStatistics();
+  hooks.refreshAreaUi();
+  hooks.refreshInteractionUI();
+  hooks.refreshPathUi();
+  hooks.render();
+}
+
+export function copyAreaSelection(){
+  if (!state.areaRect) return;
+  state.areaClipboard = captureAreaClipboard(state.areaRect, { includeCapitals: false });
+  hooks.refreshAreaUi();
+  hooks.refreshInteractionUI();
+}
+
+export function deleteAreaSelection(opts = {}){
+  if (!state.areaRect) return;
+  if (!opts.silent && state.prefConfirmDeletes && !confirm('Clear every hex, route, building and unit inside the selection?')) return;
+  pushFullStateUndo();
+  forEachHexInRect(state.areaRect, hex => resetHexToEmpty(hex));
+  rewriteRoutesKeepOutside(state.areaRect);
+  stripCapitalsInRect(state.areaRect);
+  afterAreaMutation();
+}
+
+export function cutAreaSelection(){
+  if (!state.areaRect) return;
+  if (state.prefConfirmDeletes && !confirm('Cut every hex, route, building and unit inside the selection?')) return;
+  state.areaClipboard = captureAreaClipboard(state.areaRect, { includeCapitals: true });
+  deleteAreaSelection({ silent: true });
+}
+
+export function beginAreaPaste(){
+  if (!state.areaClipboard) return;
+  state.areaMode = 'paste';
+  hooks.refreshAreaUi();
+  hooks.refreshInteractionUI();
+  hooks.render();
+}
+
+export function beginAreaMove(){
+  if (!state.areaRect) return;
+  state.areaMode = 'move';
+  hooks.refreshAreaUi();
+  hooks.refreshInteractionUI();
+  hooks.render();
+}
+
+function pasteAt(destCol, destRow, clip, { moveCapitals }){
+  if (!clip) return;
+  pushFullStateUndo();
+  applyClipboard(clip, destCol, destRow, { moveCapitals });
+  state.areaRect = areaRectFromCorners(destCol, destRow, destCol + clip.cols - 1, destRow + clip.rows - 1);
+  state.areaMode = 'idle';
+  afterAreaMutation();
+}
+
+export function pasteAreaClipboard(destCol, destRow){
+  if (!state.areaClipboard) return;
+  pasteAt(destCol, destRow, state.areaClipboard, { moveCapitals: (state.areaClipboard.capitals || []).length > 0 });
+}
+
+export function moveAreaByDelta(dCol, dRow){
+  if (!state.areaRect || (dCol === 0 && dRow === 0)) return;
+  const clip = captureAreaClipboard(state.areaRect, { includeCapitals: true });
+  pushFullStateUndo();
+  forEachHexInRect(state.areaRect, hex => resetHexToEmpty(hex));
+  rewriteRoutesKeepOutside(state.areaRect);
+  stripCapitalsInRect(state.areaRect);
+  applyClipboard(clip, state.areaRect.minCol + dCol, state.areaRect.minRow + dRow, { moveCapitals: true });
+  const size = areaRectSize(state.areaRect);
+  state.areaRect = areaRectFromCorners(
+    state.areaRect.minCol + dCol,
+    state.areaRect.minRow + dRow,
+    state.areaRect.minCol + dCol + size.cols - 1,
+    state.areaRect.minRow + dRow + size.rows - 1
+  );
+  state.areaMode = 'idle';
+  afterAreaMutation();
+}
+
+export function cropMapToArea(){
+  const rect = state.areaRect;
+  if (!rect) return;
+  const size = areaRectSize(rect);
+  if (size.cols < 2 || size.rows < 2){
+    alert('Cropped map must be at least 2×2 hexes.');
+    return;
+  }
+  if (state.prefConfirmDeletes && !confirm(`Crop the map to the selected ${size.cols}×${size.rows} area? Hexes outside will be removed.`)) return;
+
+  pushFullStateUndo();
+  const oldHexes = state.hexes;
+  const next = new Map();
+  for (let row = 0; row < size.rows; row++){
+    for (let col = 0; col < size.cols; col++){
+      const { q, r } = offsetToAxial(col, row);
+      const old = offsetToAxial(col + rect.minCol, row + rect.minRow);
+      const src = oldHexes.get(`${old.q},${old.r}`);
+      const coords = axialToPixel(q, r, HEX_SIZE);
+      if (src){
+        const cloned = cloneHex(src);
+        cloned.q = q;
+        cloned.r = r;
+        cloned.x = coords.x;
+        cloned.y = coords.y;
+        next.set(`${q},${r}`, cloned);
+      } else {
+        next.set(`${q},${r}`, {
+          q, r, x: coords.x, y: coords.y, terrain: 'ocean', elevation: 'flat', population: 0,
+          ownerFactionId: null, loyaltyFactionId: null, controllerFactionId: null, region: null,
+          culture: null, cityName: null, customData: {}, buildings: [], units: []
+        });
+      }
+    }
+  }
+  state.hexes.clear();
+  for (const [key, hex] of next) state.hexes.set(key, hex);
+  state.mapCols = size.cols;
+  state.mapRows = size.rows;
+  const colsEl = document.getElementById('mapCols');
+  const rowsEl = document.getElementById('mapRows');
+  if (colsEl) colsEl.value = size.cols;
+  if (rowsEl) rowsEl.value = size.rows;
+
+  const remapped = [];
+  for (const route of state.routes){
+    const runs = clipRouteByCellPredicate(route, cell => hexInAreaRect(cell, rect));
+    for (let i = 0; i < runs.length; i++){
+      const wps = runs[i].map(cell => {
+        const off = axialToOffset(cell.q, cell.r);
+        return offsetToAxial(off.col - rect.minCol, off.row - rect.minRow);
+      });
+      if (wps.length < 2) continue;
+      const name = i === 0 ? route.name : null;
+      remapped.push(makeRoute(i === 0 ? route.id : state.nextRouteId++, route.style, wps, name));
+    }
+  }
+  replaceRoutes(remapped);
+
+  for (const rec of state.factions.values()){
+    if (!rec.capital || !Number.isFinite(Number(rec.capital.q))) continue;
+    if (!hexInAreaRect(rec.capital, rect)){
+      setFactionCapital(rec.id, null);
+      continue;
+    }
+    const off = axialToOffset(rec.capital.q, rec.capital.r);
+    const mapped = offsetToAxial(off.col - rect.minCol, off.row - rect.minRow);
+    const hex = state.hexes.get(`${mapped.q},${mapped.r}`);
+    if (hex) setFactionCapital(rec.id, hex);
+    else setFactionCapital(rec.id, null);
+  }
+
+  state.areaRect = null;
+  state.areaDrag = null;
+  state.areaMode = 'idle';
+  centerCamera();
+  afterAreaMutation();
+}
+
+export function handleAreaPointerDown(hex){
+  if (!hex) return;
+  const off = axialToOffset(hex.q, hex.r);
+  if (state.areaMode === 'paste'){
+    pasteAreaClipboard(off.col, off.row);
+    return;
+  }
+  if (state.areaMode === 'move' && state.areaRect){
+    moveAreaByDelta(off.col - state.areaRect.minCol, off.row - state.areaRect.minRow);
+    return;
+  }
+  if (state.areaRect && hexInAreaRect(hex, state.areaRect)){
+    state.areaDrag = { kind: 'move', originCol: off.col, originRow: off.row, destCol: off.col, destRow: off.row };
+    hooks.refreshInteractionUI();
+    return;
+  }
+  state.areaMode = 'idle';
+  state.areaDrag = { kind: 'select', startCol: off.col, startRow: off.row, endCol: off.col, endRow: off.row };
+  hooks.refreshAreaUi();
+  hooks.refreshInteractionUI();
+}
+
+export function handleAreaPointerMove(hex){
+  if (!state.areaDrag || !hex) return false;
+  const off = axialToOffset(hex.q, hex.r);
+  if (state.areaDrag.kind === 'select'){
+    if (off.col === state.areaDrag.endCol && off.row === state.areaDrag.endRow) return false;
+    state.areaDrag.endCol = off.col;
+    state.areaDrag.endRow = off.row;
+    return true;
+  }
+  if (state.areaDrag.kind === 'move'){
+    if (off.col === state.areaDrag.destCol && off.row === state.areaDrag.destRow) return false;
+    state.areaDrag.destCol = off.col;
+    state.areaDrag.destRow = off.row;
+    return true;
+  }
+  return false;
+}
+
+export function finishAreaPointer(){
+  const drag = state.areaDrag;
+  if (!drag) return;
+  state.areaDrag = null;
+  if (drag.kind === 'select'){
+    state.areaRect = areaRectFromCorners(drag.startCol, drag.startRow, drag.endCol, drag.endRow);
+    hooks.refreshAreaUi();
+    hooks.refreshInteractionUI();
+    hooks.render();
+    return;
+  }
+  if (drag.kind === 'move'){
+    moveAreaByDelta(drag.destCol - drag.originCol, drag.destRow - drag.originRow);
+  }
 }
 
 /* ----------------------------------------------------------------------------

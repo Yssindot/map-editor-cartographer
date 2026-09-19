@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Cartographer V0.9.1 -->
+<!-- Cartographer V0.9.2 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -134,8 +134,8 @@
     <div class="drawer-panel" id="drawer-routes" hidden>
       <section class="panel-section" id="routesSection">
         <h2><i data-lucide="git-branch"></i> Routes</h2>
-        <div class="hint">Select a route to edit it on the map. Drawing, editing and erasing still use the Road / River tool options on the left.</div>
-        <div id="routeList" class="hint">No roads or rivers drawn yet.</div>
+        <div class="hint">Select a route to edit it on the map. Drawing, editing and erasing still use the Routes tool options on the left.</div>
+        <div id="routeList" class="hint">No roads, rivers or channels drawn yet.</div>
       </section>
     </div>
 
@@ -306,9 +306,9 @@
             <div class="hint">Independent of tile ownership. Several units per hex.</div>
           </section>
 
-          <!-- ROAD / RIVER TOOL -->
+          <!-- ROUTES TOOL -->
           <section class="panel-section" data-tool="path">
-            <h2><i data-lucide="route"></i> Road / River</h2>
+            <h2><i data-lucide="route"></i> Routes</h2>
             <div class="swatch-grid" id="routeSwatches"></div>
             <label>Mode</label>
             <div class="radio-row inline">
@@ -320,7 +320,28 @@
             <div class="hint">
               <b>Draw</b> — start, then end. Shift+Click waypoint, Alt+Click branch, Esc cancel.<br>
               <b>Edit</b> — click a path, drag handles. Shift+Click insert, Alt+Click remove.<br>
-              Paths may join or cross at one hex, but cannot run along each other or themselves. Blocked hexes preview in red.
+              A path cannot cover the same hex twice. Paths of the same kind may join or cross at one hex, but cannot run along each other. Roads, rivers and channels may share tiles. Blocked hexes preview in red.
+            </div>
+          </section>
+
+          <!-- AREA SELECTION TOOL -->
+          <section class="panel-section" data-tool="area">
+            <h2><i data-lucide="box-select"></i> Area Selection</h2>
+            <div class="hint" id="areaSelectionStatus">Drag on the map to select a rectangle of hexes.</div>
+            <div class="btn-row">
+              <button class="btn" id="areaCopyBtn" disabled>Copy</button>
+              <button class="btn" id="areaCutBtn" disabled>Cut</button>
+              <button class="btn" id="areaPasteBtn" disabled>Paste</button>
+            </div>
+            <div class="btn-row">
+              <button class="btn" id="areaMoveBtn" disabled>Move</button>
+              <button class="btn" id="areaDeleteBtn" disabled>Delete</button>
+            </div>
+            <button class="btn btn-primary" id="areaCropBtn" disabled>Crop Map to Selection</button>
+            <div class="hint">
+              Drag two corners to select. Copy, cut, delete and move apply to every hex, route, building and unit inside.<br>
+              <b>Crop</b> shrinks map width and height to the selection.<br>
+              Ctrl+C / Ctrl+X / Ctrl+V / Delete. Esc clears the selection.
             </div>
           </section>
 
@@ -402,7 +423,7 @@
           </button>
           <div class="float-tab-body">
             <div class="radio-row" id="toolRadios"></div>
-            <div class="hint">Each tool writes only its own layer, except faction paint which also sets matching loyalty and de facto control (and clears regions when ownership changes). Number keys 1–9 and 0 switch tools.</div>
+            <div class="hint">Each tool writes only its own layer, except faction paint which also sets matching loyalty and de facto control (and clears regions when ownership changes). Number keys 1–9 and 0 switch tools; D is De Facto, R is Region, A is Area.</div>
           </div>
         </section>
         <section class="float-tab" id="layersTab">
@@ -421,7 +442,7 @@
               <label><input type="checkbox" id="layerLoyalty"> Loyalty</label>
               <label><input type="checkbox" id="layerController"> De Facto Control</label>
               <label><input type="checkbox" id="layerCulture"> Culture</label>
-              <label><input type="checkbox" id="layerRoutes" checked> Roads & Rivers</label>
+              <label><input type="checkbox" id="layerRoutes" checked> Roads, Rivers & Channels</label>
               <label><input type="checkbox" id="layerBuildings" checked> Buildings</label>
               <label><input type="checkbox" id="layerUnits" checked> Units</label>
               <label><input type="checkbox" id="layerPopulation"> Population Heatmap</label>

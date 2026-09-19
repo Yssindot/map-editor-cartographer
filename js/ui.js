@@ -34,7 +34,11 @@ import {
   getBuildingType, renameBuildingOnHex, deleteBuildingOnHex, toggleBuildingOperational,
   formatBuildingHoverLine, formatUnitHoverLine, buildingOwnerColor,
   stampUnitOnHex, renameUnitOnHex, deleteUnitOnHex,
-  formatPop, computeMapStatistics
+  formatPop, computeMapStatistics,
+  waypointIndexAtHex, removeWaypoint, findRouteAtHex,
+  handleAreaPointerDown, handleAreaPointerMove, finishAreaPointer,
+  copyAreaSelection, cutAreaSelection, deleteAreaSelection, beginAreaPaste,
+  beginAreaMove, cropMapToArea, cancelAreaTool, areaRectSize
 } from './domain.js';
 
 function getMousePos(e){
@@ -70,7 +74,7 @@ canvas.addEventListener('mousedown', e => {
 
   if (e.button === 0){
     // Select Override via Shift+Click (disabled while drawing a path)
-    if (e.shiftKey && getToolDef().kind !== 'path') {
+    if (e.shiftKey && getToolDef().kind !== 'path' && getToolDef().kind !== 'area') {
       state.selectedHex = getHexAtScreen(pos.x, pos.y);
       refreshSelectedHexPanel();
       render();
@@ -79,6 +83,12 @@ canvas.addEventListener('mousedown', e => {
 
     if (getToolDef().kind === 'path'){
       handlePathClick(getHexAtScreen(pos.x, pos.y), e);
+      return;
+    }
+
+    if (getToolDef().kind === 'area'){
+      handleAreaPointerDown(getHexAtScreen(pos.x, pos.y));
+      render();
       return;
     }
 
@@ -139,6 +149,7 @@ window.addEventListener('mousemove', e => {
       if (state.routeDrag && state.hoveredHex){
         state.routeDrag.waypoints[state.routeDrag.index] = { q: state.hoveredHex.q, r: state.hoveredHex.r };
       }
+      if (getToolDef().kind === 'area') handleAreaPointerMove(state.hoveredHex);
       updateInspector(state.hoveredHex);
       render(); // Trigger re-render to update brush preview and outlines
     }
@@ -157,6 +168,7 @@ window.addEventListener('mouseup', () => {
     commitAction();
   }
   if (state.routeDrag) finishRouteDrag();
+  if (state.areaDrag) finishAreaPointer();
   state.isDraggingBg = false;
   if (state.isPanning) state.isPanning = false;
   refreshInteractionUI();
@@ -209,10 +221,25 @@ window.addEventListener('keydown', e => {
   } else if ((e.ctrlKey || e.metaKey) && (key === 'y' || (e.shiftKey && key === 'z'))){
     e.preventDefault();
     redo();
-    } else if (key === 'escape'){
+  } else if ((e.ctrlKey || e.metaKey) && getToolDef().kind === 'area'){
+    if (key === 'c'){
+      e.preventDefault();
+      copyAreaSelection();
+    } else if (key === 'x'){
+      e.preventDefault();
+      cutAreaSelection();
+    } else if (key === 'v'){
+      e.preventDefault();
+      beginAreaPaste();
+    }
+  } else if (key === 'escape'){
     if (state.pathDraft || state.routeDrag){
       e.preventDefault();
       cancelPathDraft();
+      render();
+    } else if (state.areaDrag || state.areaRect || state.areaMode !== 'idle'){
+      e.preventDefault();
+      cancelAreaTool();
       render();
     } else if (state.selectedRouteId !== null){
       e.preventDefault();
@@ -221,6 +248,9 @@ window.addEventListener('keydown', e => {
     } else if (closeTopDrawer()){
       e.preventDefault();
     }
+  } else if ((key === 'delete' || key === 'backspace') && getToolDef().kind === 'area'){
+    e.preventDefault();
+    deleteAreaSelection();
   } else if ((key === 'delete' || key === 'backspace') && getToolDef().kind === 'path' && !state.pathDraft && !state.routeDrag){
     const selected = getSelectedRoute();
     const wpIndex = waypointIndexAtHex(selected, state.hoveredHex);
@@ -283,8 +313,20 @@ function updateControlsHint(){
     } else {
       toolHint = '<div><b>Click</b> — start path</div><div><b>Click an end</b> — extend that path</div><div><b>Alt+Click</b> — branch off instead</div>';
     }
+  } else if (tool.kind === 'area'){
+    if (state.areaMode === 'paste'){
+      toolHint = '<div><b>Click</b> — paste here (this hex is the top-left)</div><div><b>Esc</b> — cancel paste</div>';
+    } else if (state.areaMode === 'move'){
+      toolHint = '<div><b>Click</b> — move selection here (this hex is the new top-left)</div><div><b>Esc</b> — cancel move</div>';
+    } else if (state.areaDrag && state.areaDrag.kind === 'move'){
+      toolHint = '<div><b>Release</b> — drop the selection here</div>';
+    } else if (state.areaRect){
+      toolHint = '<div><b>Drag inside</b> — move</div><div><b>Drag outside</b> — new selection</div><div><b>Ctrl+C / X / V</b> — copy, cut, paste</div><div><b>Delete</b> — clear</div>';
+    } else {
+      toolHint = '<div><b>Drag</b> — select a rectangle of hexes</div>';
+    }
   }
-  const selectHint = tool.kind === 'path'
+  const selectHint = (tool.kind === 'path' || tool.kind === 'area')
     ? ''
     : `<div><b>Shift+Click</b> — select hex for data</div>`;
   el.innerHTML = `${toolHint}${selectHint}<div><b>Right/Middle</b> drag — pan</div><div><b>Scroll</b> — zoom</div>`;
@@ -293,11 +335,18 @@ function updateControlsHint(){
 export function refreshInteractionUI(){
   updateCursor();
   updateControlsHint();
+  refreshAreaUi();
 }
 
 export function setActiveTool(id){
   if (!TOOL_BY_ID[id]) return;
-  if (state.activeTool !== id) cancelPathDraft();
+  if (state.activeTool !== id){
+    cancelPathDraft();
+    if (id !== 'area'){
+      state.areaDrag = null;
+      state.areaMode = 'idle';
+    }
+  }
   state.activeTool = id;
   if (id === 'region'){
     const faction = regionFactionFilter();
@@ -405,6 +454,42 @@ document.getElementById('cancelPathBtn').addEventListener('click', () => {
   cancelPathDraft();
   render();
 });
+
+export function refreshAreaUi(){
+  const hasRect = !!state.areaRect;
+  const hasClip = !!state.areaClipboard;
+  const copyBtn = document.getElementById('areaCopyBtn');
+  const cutBtn = document.getElementById('areaCutBtn');
+  const pasteBtn = document.getElementById('areaPasteBtn');
+  const moveBtn = document.getElementById('areaMoveBtn');
+  const deleteBtn = document.getElementById('areaDeleteBtn');
+  const cropBtn = document.getElementById('areaCropBtn');
+  if (copyBtn) copyBtn.disabled = !hasRect;
+  if (cutBtn) cutBtn.disabled = !hasRect;
+  if (pasteBtn) pasteBtn.disabled = !hasClip;
+  if (moveBtn) moveBtn.disabled = !hasRect;
+  if (deleteBtn) deleteBtn.disabled = !hasRect;
+  if (cropBtn) cropBtn.disabled = !hasRect;
+  const status = document.getElementById('areaSelectionStatus');
+  if (!status) return;
+  if (state.areaMode === 'paste'){
+    status.textContent = 'Click a hex to paste. That hex becomes the top-left of the clipboard.';
+  } else if (state.areaMode === 'move'){
+    status.textContent = 'Click a hex to move the selection. That hex becomes the new top-left.';
+  } else if (hasRect){
+    const size = areaRectSize(state.areaRect);
+    status.textContent = `Selected ${size.cols} × ${size.rows} hexes (${size.cols * size.rows} tiles).`;
+  } else {
+    status.textContent = 'Drag on the map to select a rectangle of hexes.';
+  }
+}
+
+document.getElementById('areaCopyBtn').addEventListener('click', () => copyAreaSelection());
+document.getElementById('areaCutBtn').addEventListener('click', () => cutAreaSelection());
+document.getElementById('areaPasteBtn').addEventListener('click', () => beginAreaPaste());
+document.getElementById('areaMoveBtn').addEventListener('click', () => beginAreaMove());
+document.getElementById('areaDeleteBtn').addEventListener('click', () => deleteAreaSelection());
+document.getElementById('areaCropBtn').addEventListener('click', () => cropMapToArea());
 
 document.getElementById('layerTerrain').addEventListener('change', e => { state.viewLayers.terrain = e.target.checked; render(); });
 document.getElementById('layerElevation').addEventListener('change', e => { state.viewLayers.elevation = e.target.checked; render(); });
@@ -594,6 +679,9 @@ function renderFactionStats(body, rec){
   appendStatRow(overview, 'Population / hex', formatStatPerHex(rec.popPerHex));
   appendStatRow(overview, 'Total Buildings', formatStatCount(rec.buildings));
   appendStatRow(overview, 'Total Units', formatStatCount(rec.units));
+  const holdingsNote = statsEl('p', 'stats-note');
+  holdingsNote.textContent = 'Buildings and units count by operating / commanding faction, including those outside this faction’s territory.';
+  overview.appendChild(holdingsNote);
   body.appendChild(overview);
 
   appendCultureBlock(body, rec.cultures, 'No cultures painted in this territory.');
@@ -1481,7 +1569,7 @@ export function refreshRouteList(){
   if (!listEl) return;
   listEl.innerHTML = '';
   if (state.routes.length === 0){
-    listEl.innerHTML = '<div class="hint">No roads or rivers drawn yet.</div>';
+    listEl.innerHTML = '<div class="hint">No roads, rivers or channels drawn yet.</div>';
     return;
   }
   const ordered = state.routes.slice().sort((a, b) => {
@@ -3114,7 +3202,9 @@ function populateAboutModal(){
         <li><b>Ctrl+Z</b> — Undo</li>
         <li><b>Ctrl+Y</b> / <b>Ctrl+Shift+Z</b> — Redo</li>
         ${toolShortcuts}
-        <li><b>Esc</b> — Cancel path, deselect, or close a dialog</li>
+        <li><b>Esc</b> — Cancel path, clear area selection, deselect, or close a dialog</li>
+        <li><b>Ctrl+C / X / V</b> — Copy, cut, paste (Area tool)</li>
+        <li><b>Delete</b> — Clear the area selection or erase a hovered path</li>
         <li><b>Right / Middle drag</b> — Pan</li>
         <li><b>Scroll</b> — Zoom</li>
         <li><b>Shift+Click</b> — Select a hex</li>

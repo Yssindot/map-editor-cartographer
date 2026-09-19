@@ -28,6 +28,13 @@ export function offsetToAxial(col, row){
   return { q, r };
 }
 
+export function axialToOffset(q, r){
+  return {
+    col: q + (r - (r & 1)) / 2,
+    row: r
+  };
+}
+
 export function hexRange(centerQ, centerR, radius){
   const results = [];
   for (let dx = -radius; dx <= radius; dx++){

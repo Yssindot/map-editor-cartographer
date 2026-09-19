@@ -17,8 +17,8 @@ export const DEFAULT_TERRAIN_DEFS = [
   { id:'urban_ruins', label:'Urban Ruins', color:'#5a5248' }
 ];
 export const LEGACY_TERRAIN_IDS = { plains: 'grassland', river: 'grassland' };
-export const APP_VERSION = '0.9.1';
-export const MAP_META_VERSION = 11;
+export const APP_VERSION = '0.9.2';
+export const MAP_META_VERSION = 12;
 
 export const ELEVATION_DEFS = [
   { id:'flat',      label:'Flat' },
@@ -28,13 +28,14 @@ export const ELEVATION_DEFS = [
 export const ELEVATION_LABELS = Object.fromEntries(ELEVATION_DEFS.map(e => [e.id, e.label]));
 
 export const ROUTE_DEFS = [
-  { id:'river1',  kind:'river', type:1, label:'Shallow River', color:'#8fd4ff', outline:'#3a8ec4', width: HEX_SIZE * 0.14 },
-  { id:'river2',  kind:'river', type:2, label:'Deep River',    color:'#2f7eb8', outline:'#163e63', width: HEX_SIZE * 0.36 },
-  { id:'dirt',    kind:'road',  type:1, label:'Dirt Road',      color:'#d2a66a', outline:'#7a5c32', width: HEX_SIZE * 0.22 },
-  { id:'asphalt', kind:'road',  type:2, label:'Asphalt Road',   color:'#8a9098', outline:'#3d4148', width: HEX_SIZE * 0.22 }
+  { id:'river1',  kind:'river',   type:1, label:'Shallow River', color:'#8fd4ff', outline:'#3a8ec4', width: HEX_SIZE * 0.14 },
+  { id:'river2',  kind:'river',   type:2, label:'Deep River',    color:'#2f7eb8', outline:'#163e63', width: HEX_SIZE * 0.36 },
+  { id:'channel', kind:'channel', type:1, label:'Channel',       color:'#3ec8b8', outline:'#15665c', width: HEX_SIZE * 0.20 },
+  { id:'dirt',    kind:'road',    type:1, label:'Dirt Road',      color:'#d2a66a', outline:'#7a5c32', width: HEX_SIZE * 0.22 },
+  { id:'asphalt', kind:'road',    type:2, label:'Asphalt Road',   color:'#8a9098', outline:'#3d4148', width: HEX_SIZE * 0.22 }
 ];
 export const ROUTE_BY_ID = Object.fromEntries(ROUTE_DEFS.map(d => [d.id, d]));
-export const ROUTE_DRAW_ORDER = { river1: 0, river2: 1, dirt: 2, asphalt: 3 };
+export const ROUTE_DRAW_ORDER = { river1: 0, river2: 1, channel: 2, dirt: 3, asphalt: 4 };
 export const PATH_INVALID_COLOR = '#ff5a5a';
 
 export const DEFAULT_BUILDING_TYPES = [

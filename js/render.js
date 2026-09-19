@@ -2,7 +2,7 @@ import { state } from './state.js';
 import {
   HEX_SIZE, ELEVATION_LABELS, ROUTE_BY_ID, ROUTE_DRAW_ORDER, PATH_INVALID_COLOR
 } from './constants.js';
-import { NEIGHBOR_DIRS, axialToPixel, hexRange, edgeSegment } from './hexMath.js';
+import { NEIGHBOR_DIRS, axialToPixel, hexRange, edgeSegment, offsetToAxial } from './hexMath.js';
 import { shiftHexHue } from './color.js';
 import { canvas, ctx, canvasWrap, hudStatsEl, inspectorHudEl, screenToWorld } from './canvas.js';
 import {
@@ -11,7 +11,7 @@ import {
   getToolDef, skipOceanForTool, isWaterHex, routeWorldPolylines,
   validatePath, cloneWaypoints, getSelectedRoute, findRouteAtHex, isRouteBusy,
   routesOnHex, hexRegion, getRegion, buildingOwnerColor, formatBuildingHoverLine,
-  formatUnitHoverLine, factionName
+  formatUnitHoverLine, factionName, getLiveAreaRect, getAreaPreviewRect
 } from './domain.js';
 
 export function drawBackgroundImage(){
@@ -469,7 +469,7 @@ export function drawPathOverlay(){
   if (state.routeDrag){
     const route = state.routes.find(r => r.id === state.routeDrag.routeId);
     if (route){
-      const check = validatePath(state.routeDrag.waypoints, state.routeDrag.routeId);
+      const check = validatePath(state.routeDrag.waypoints, state.routeDrag.routeId, route.style);
       drawPathPreview(state.routeDrag.waypoints, route.style, check);
       drawWaypointHandles(state.routeDrag.waypoints, (ROUTE_BY_ID[route.style] || {}).color, state.routeDrag.index);
     }
@@ -499,8 +499,31 @@ export function drawPathOverlay(){
   if (!state.pathDraft) return;
 
   const previewPts = draftWaypointsWithHover();
-  drawPathPreview(previewPts, state.pathDraft.style, validatePath(previewPts, state.pathDraft.routeId));
+  drawPathPreview(previewPts, state.pathDraft.style, validatePath(previewPts, state.pathDraft.routeId, state.pathDraft.style));
   drawWaypointHandles(state.pathDraft.waypoints, (ROUTE_BY_ID[state.pathDraft.style] || {}).color || '#fff', -1);
+}
+
+export function drawAreaSelection(){
+  if (getToolDef().kind !== 'area' || state.backgroundEditMode) return;
+  const live = getLiveAreaRect();
+  const preview = getAreaPreviewRect();
+  if (live) drawAreaRectFill(live, 'rgba(201, 162, 77, 0.28)');
+  if (preview) drawAreaRectFill(preview, 'rgba(79, 195, 255, 0.30)');
+}
+
+function drawAreaRectFill(rect, color){
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let row = rect.minRow; row <= rect.maxRow; row++){
+    for (let col = rect.minCol; col <= rect.maxCol; col++){
+      const { q, r } = offsetToAxial(col, row);
+      const hex = state.hexes.get(`${q},${r}`);
+      if (hex) addHexToPath(ctx, hex.x, hex.y, HEX_SIZE);
+    }
+  }
+  ctx.fill();
+  ctx.restore();
 }
 
 export function drawBrushPreview() {
@@ -674,6 +697,7 @@ export function render(){
   drawUnitMarkers();
   
   drawBrushPreview();
+  drawAreaSelection();
   if (state.selectedHex) drawHexOutline(state.selectedHex, '#4fc3ff', true);
   if (state.hoveredHex && !state.backgroundEditMode) drawHexOutline(state.hoveredHex, '#ffffff', false);
 
